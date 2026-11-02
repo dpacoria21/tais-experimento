@@ -1,0 +1,1032 @@
+package model
+
+import (
+	"math/big"
+	"testing"
+	"time"
+
+	"github.com/blnkfinance/blnk/model"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSourceOrSourcesValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		transaction RecordTransaction
+		wantErr     bool
+	}{
+		{
+			name:        "Valid with Source",
+			transaction: RecordTransaction{Source: "source1"},
+			wantErr:     false,
+		},
+		{
+			name:        "Valid with Sources",
+			transaction: RecordTransaction{Sources: []model.Distribution{{Identifier: "source1", Distribution: "100"}}},
+			wantErr:     false,
+		},
+		{
+			name:        "Invalid with both Source and Sources",
+			transaction: RecordTransaction{Source: "source1", Sources: []model.Distribution{{Identifier: "source2", Distribution: "100"}}},
+			wantErr:     true,
+		},
+		{
+			name:        "Invalid with neither Source nor Sources",
+			transaction: RecordTransaction{},
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := sourceOrSourcesValidation(&tt.transaction)(nil)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestDestinationOrDestinationsValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		transaction RecordTransaction
+		wantErr     bool
+	}{
+		{
+			name:        "Valid with Destination",
+			transaction: RecordTransaction{Destination: "dest1"},
+			wantErr:     false,
+		},
+		{
+			name:        "Valid with Destinations",
+			transaction: RecordTransaction{Destinations: []model.Distribution{{Identifier: "dest1", Distribution: "100"}}},
+			wantErr:     false,
+		},
+		{
+			name:        "Invalid with both Destination and Destinations",
+			transaction: RecordTransaction{Destination: "dest1", Destinations: []model.Distribution{{Identifier: "dest2", Distribution: "100"}}},
+			wantErr:     true,
+		},
+		{
+			name:        "Invalid with neither Destination nor Destinations",
+			transaction: RecordTransaction{},
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := destinationOrDestinationsValidation(&tt.transaction)(nil)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateCreateLedger(t *testing.T) {
+	tests := []struct {
+		name    string
+		ledger  CreateLedger
+		wantErr bool
+	}{
+		{
+			name:    "Valid Ledger",
+			ledger:  CreateLedger{Name: "Test Ledger"},
+			wantErr: false,
+		},
+		{
+			name:    "Invalid Ledger - Empty Name",
+			ledger:  CreateLedger{},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.ledger.ValidateCreateLedger()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateUpdateLedger(t *testing.T) {
+	tests := []struct {
+		name    string
+		ledger  UpdateLedger
+		wantErr bool
+	}{
+		{
+			name:    "Valid Update Ledger",
+			ledger:  UpdateLedger{Name: "Updated Ledger"},
+			wantErr: false,
+		},
+		{
+			name:    "Invalid Update Ledger - Empty Name",
+			ledger:  UpdateLedger{},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.ledger.ValidateUpdateLedger()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateCreateBalance(t *testing.T) {
+	tests := []struct {
+		name    string
+		balance CreateBalance
+		wantErr bool
+	}{
+		{
+			name:    "Valid Balance",
+			balance: CreateBalance{LedgerId: "ledger1", Currency: "USD"},
+			wantErr: false,
+		},
+		{
+			name:    "Invalid Balance - Missing LedgerId",
+			balance: CreateBalance{Currency: "USD"},
+			wantErr: true,
+		},
+		{
+			name:    "Invalid Balance - Missing Currency",
+			balance: CreateBalance{LedgerId: "ledger1"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.balance.ValidateCreateBalance()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateCreateAccount(t *testing.T) {
+	tests := []struct {
+		name    string
+		account CreateAccount
+		wantErr bool
+	}{
+		{
+			name:    "Valid Account with LedgerId",
+			account: CreateAccount{LedgerId: "ledger1", IdentityId: "identity1", Currency: "USD"},
+			wantErr: false,
+		},
+		{
+			name:    "Valid Account with BalanceId",
+			account: CreateAccount{BalanceId: "balance1"},
+			wantErr: false,
+		},
+		{
+			name:    "Invalid Account - Missing Required Fields",
+			account: CreateAccount{},
+			wantErr: true,
+		},
+		{
+			name:    "Invalid Account - Both LedgerId and BalanceId",
+			account: CreateAccount{LedgerId: "ledger1", BalanceId: "balance1", IdentityId: "identity1", Currency: "USD"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.account.ValidateCreateAccount()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateRecordTransaction(t *testing.T) {
+	tests := []struct {
+		name        string
+		transaction RecordTransaction
+		wantErr     bool
+	}{
+		{
+			name: "Valid Transaction",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Currency:    "USD",
+				Reference:   "ref1",
+				Description: "Test transaction",
+				Source:      "source1",
+				Destination: "dest1",
+				SkipQueue:   true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid Transaction - Integer Precision",
+			transaction: RecordTransaction{
+				Amount:      50,
+				Precision:   1000,
+				Currency:    "USD",
+				Reference:   "ref_precision_int",
+				Description: "Integer precision transaction",
+				Source:      "source1",
+				Destination: "dest1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Invalid Transaction - Non-integer Precision",
+			transaction: RecordTransaction{
+				Amount:      50,
+				Precision:   10.5,
+				Currency:    "USD",
+				Reference:   "ref_precision_float",
+				Description: "Fractional precision transaction",
+				Source:      "source1",
+				Destination: "dest1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid Transaction - Missing Required Fields",
+			transaction: RecordTransaction{
+				Amount: 100,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid Transaction - Invalid ScheduledFor",
+			transaction: RecordTransaction{
+				Amount:       100,
+				Currency:     "USD",
+				Reference:    "ref1",
+				Description:  "Test transaction",
+				Source:       "source1",
+				Destination:  "dest1",
+				ScheduledFor: "invalid-date",
+				SkipQueue:    true,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Valid Transaction - Valid InflightCommitDate",
+			transaction: RecordTransaction{
+				Amount:             100,
+				Currency:           "USD",
+				Reference:          "ref1",
+				Description:        "Test transaction",
+				Source:             "source1",
+				Destination:        "dest1",
+				Inflight:           true,
+				InflightCommitDate: "2024-04-22T15:28:03+00:00",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Invalid Transaction - Invalid InflightCommitDate",
+			transaction: RecordTransaction{
+				Amount:             100,
+				Currency:           "USD",
+				Reference:          "ref1",
+				Description:        "Test transaction",
+				Source:             "source1",
+				Destination:        "dest1",
+				Inflight:           true,
+				InflightCommitDate: "invalid-date",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid Transaction - Source equals Destination",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Currency:    "USD",
+				Reference:   "ref1",
+				Description: "Test transaction",
+				Source:      "bln_same",
+				Destination: "bln_same",
+				SkipQueue:   true,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid Transaction - Source appears among Destinations (fan-out)",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Currency:    "USD",
+				Reference:   "ref1",
+				Description: "Test transaction",
+				Source:      "bln_a",
+				Destinations: []model.Distribution{
+					{Identifier: "bln_a", Distribution: "50%"},
+					{Identifier: "bln_b", Distribution: "50%"},
+				},
+				SkipQueue: true,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid Transaction - Destination appears among Sources (fan-in)",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Currency:    "USD",
+				Reference:   "ref1",
+				Description: "Test transaction",
+				Destination: "bln_b",
+				Sources: []model.Distribution{
+					{Identifier: "bln_a", Distribution: "50%"},
+					{Identifier: "bln_b", Distribution: "50%"},
+				},
+				SkipQueue: true,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Valid Transaction - Source and Destination distinct",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Currency:    "USD",
+				Reference:   "ref1",
+				Description: "Test transaction",
+				Source:      "bln_a",
+				Destination: "bln_b",
+				SkipQueue:   true,
+			},
+			wantErr: false,
+		},
+		{
+			// The bypass: negative x negative yields a positive precise
+			// amount, so every downstream positivity check passes while the
+			// persisted record still reports a negative amount.
+			name: "Invalid Transaction - Negative amount with negative precision (bypass)",
+			transaction: RecordTransaction{
+				Amount:      -25,
+				Precision:   -100,
+				Currency:    "USD",
+				Reference:   "ref_neg_bypass",
+				Description: "Test transaction",
+				Source:      "source1",
+				Destination: "dest1",
+				SkipQueue:   true,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid Transaction - Negative amount alone",
+			transaction: RecordTransaction{
+				Amount:      -25,
+				Precision:   100,
+				Currency:    "USD",
+				Reference:   "ref_neg_amount",
+				Description: "Test transaction",
+				Source:      "source1",
+				Destination: "dest1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid Transaction - Negative precision alone",
+			transaction: RecordTransaction{
+				Amount:      25,
+				Precision:   -100,
+				Currency:    "USD",
+				Reference:   "ref_neg_precision",
+				Description: "Test transaction",
+				Source:      "source1",
+				Destination: "dest1",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Invalid Transaction - Negative precise_amount",
+			transaction: RecordTransaction{
+				PreciseAmount: big.NewInt(-1000),
+				Precision:     100,
+				Currency:      "USD",
+				Reference:     "ref_neg_precise",
+				Description:   "Test transaction",
+				Source:        "source1",
+				Destination:   "dest1",
+			},
+			wantErr: true,
+		},
+		{
+			// Zero precision means "not supplied" and is defaulted to 1
+			// downstream, so it must stay valid.
+			name: "Valid Transaction - Zero precision is still allowed",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Precision:   0,
+				Currency:    "USD",
+				Reference:   "ref_zero_precision",
+				Description: "Test transaction",
+				Source:      "source1",
+				Destination: "dest1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Invalid Transaction - Zero precise_amount",
+			transaction: RecordTransaction{
+				PreciseAmount: big.NewInt(0),
+				Precision:     100,
+				Currency:      "USD",
+				Reference:     "ref_zero_precise",
+				Description:   "Test transaction",
+				Source:        "source1",
+				Destination:   "dest1",
+			},
+			wantErr: true,
+		},
+		{
+			// Zero amount alongside precise_amount is the existing sentinel
+			// for "use precise_amount"; this fix must not disturb it.
+			name: "Valid Transaction - Zero amount with positive precise_amount",
+			transaction: RecordTransaction{
+				Amount:        0,
+				PreciseAmount: big.NewInt(1000),
+				Precision:     100,
+				Currency:      "USD",
+				Reference:     "ref_zero_amount",
+				Description:   "Test transaction",
+				Source:        "source1",
+				Destination:   "dest1",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.transaction.ValidateRecordTransaction()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestToLedger(t *testing.T) {
+	createLedger := CreateLedger{
+		Name:     "Test Ledger",
+		MetaData: map[string]interface{}{"key": "value"},
+	}
+
+	ledger := createLedger.ToLedger()
+
+	assert.Equal(t, createLedger.Name, ledger.Name)
+	assert.Equal(t, createLedger.MetaData, ledger.MetaData)
+}
+
+func TestToBalance(t *testing.T) {
+	createBalance := CreateBalance{
+		LedgerId:   "ledger1",
+		IdentityId: "identity1",
+		Currency:   "USD",
+		MetaData:   map[string]interface{}{"key": "value"},
+		Precision:  2,
+	}
+
+	balance := createBalance.ToBalance()
+
+	assert.Equal(t, createBalance.LedgerId, balance.LedgerID)
+	assert.Equal(t, createBalance.IdentityId, balance.IdentityID)
+	assert.Equal(t, createBalance.Currency, balance.Currency)
+	assert.Equal(t, createBalance.MetaData, balance.MetaData)
+}
+
+func TestToAccount(t *testing.T) {
+	createAccount := CreateAccount{
+		BalanceId:  "balance1",
+		LedgerId:   "ledger1",
+		IdentityId: "identity1",
+		Currency:   "USD",
+		Number:     "123456",
+		BankName:   "Test Bank",
+		MetaData:   map[string]interface{}{"key": "value"},
+	}
+
+	account := createAccount.ToAccount()
+
+	assert.Equal(t, createAccount.BalanceId, account.BalanceID)
+	assert.Equal(t, createAccount.LedgerId, account.LedgerID)
+	assert.Equal(t, createAccount.IdentityId, account.IdentityID)
+	assert.Equal(t, createAccount.Currency, account.Currency)
+	assert.Equal(t, createAccount.Number, account.Number)
+	assert.Equal(t, createAccount.BankName, account.BankName)
+	assert.Equal(t, createAccount.MetaData, account.MetaData)
+}
+
+func TestToTransaction(t *testing.T) {
+	now := time.Now()
+	scheduledFor := now.Add(24 * time.Hour)
+	inflightExpiryDate := now.Add(48 * time.Hour)
+	inflightCommitDate := now.Add(72 * time.Hour)
+
+	recordTransaction := RecordTransaction{
+		Currency:           "USD",
+		Source:             "source1",
+		Description:        "Test transaction",
+		Reference:          "ref1",
+		ScheduledFor:       scheduledFor.Format(time.RFC3339),
+		Destination:        "dest1",
+		Amount:             100,
+		AllowOverDraft:     true,
+		MetaData:           map[string]interface{}{"key": "value"},
+		Sources:            []model.Distribution{{Identifier: "source1", Distribution: "100"}},
+		Destinations:       []model.Distribution{{Identifier: "dest1", Distribution: "100"}},
+		Inflight:           true,
+		Precision:          2,
+		InflightExpiryDate: inflightExpiryDate.Format(time.RFC3339),
+		InflightCommitDate: inflightCommitDate.Format(time.RFC3339),
+		SkipQueue:          true,
+	}
+
+	transaction := recordTransaction.ToTransaction()
+
+	assert.Equal(t, recordTransaction.Currency, transaction.Currency)
+	assert.Equal(t, recordTransaction.Source, transaction.Source)
+	assert.Equal(t, recordTransaction.Description, transaction.Description)
+	assert.Equal(t, recordTransaction.Reference, transaction.Reference)
+	assert.Equal(t, recordTransaction.Destination, transaction.Destination)
+	assert.Equal(t, recordTransaction.Amount, transaction.Amount)
+	assert.Equal(t, recordTransaction.AllowOverDraft, transaction.AllowOverdraft)
+	assert.Equal(t, recordTransaction.MetaData, transaction.MetaData)
+	assert.Equal(t, recordTransaction.Sources, transaction.Sources)
+	assert.Equal(t, recordTransaction.Destinations, transaction.Destinations)
+	assert.Equal(t, recordTransaction.Inflight, transaction.Inflight)
+	assert.Equal(t, recordTransaction.Precision, transaction.Precision)
+	assert.Equal(t, recordTransaction.SkipQueue, transaction.SkipQueue)
+	assert.False(t, transaction.InflightCommitDate.IsZero(), "InflightCommitDate should be parsed and set")
+	assert.WithinDuration(t, inflightCommitDate, transaction.InflightCommitDate, time.Second)
+}
+
+func TestToTransactionInflightCommitDateEmpty(t *testing.T) {
+	recordTransaction := RecordTransaction{
+		Currency:    "USD",
+		Source:      "source1",
+		Description: "Test transaction",
+		Reference:   "ref1",
+		Destination: "dest1",
+		Amount:      100,
+		Inflight:    true,
+	}
+
+	transaction := recordTransaction.ToTransaction()
+
+	assert.True(t, transaction.InflightCommitDate.IsZero(), "InflightCommitDate should be zero when not provided")
+}
+
+func TestValidateCreateBalanceMonitor(t *testing.T) {
+	tests := []struct {
+		name    string
+		monitor CreateBalanceMonitor
+		wantErr bool
+	}{
+		{
+			name: "Valid balance monitor",
+			monitor: CreateBalanceMonitor{
+				BalanceId: "bln_123",
+				Condition: MonitorCondition{
+					Field:     "balance",
+					Operator:  ">",
+					Value:     100,
+					Precision: 100,
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Missing balance ID",
+			monitor: CreateBalanceMonitor{
+				Condition: MonitorCondition{
+					Field:     "balance",
+					Operator:  ">",
+					Value:     100,
+					Precision: 100,
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Missing condition",
+			monitor: CreateBalanceMonitor{
+				BalanceId: "bln_123",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.monitor.ValidateCreateBalanceMonitor()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidateCreateBalance_Indicator(t *testing.T) {
+	tests := []struct {
+		name    string
+		balance CreateBalance
+		wantErr bool
+	}{
+		{
+			name: "Valid GL indicator",
+			balance: CreateBalance{
+				LedgerId:  "general_ledger_id",
+				Currency:  "USD",
+				Indicator: "@cash",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Indicator omitted",
+			balance: CreateBalance{
+				LedgerId: "general_ledger_id",
+				Currency: "USD",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Missing @ prefix",
+			balance: CreateBalance{
+				LedgerId:  "general_ledger_id",
+				Currency:  "USD",
+				Indicator: "cash",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Indicator with internal spaces",
+			balance: CreateBalance{
+				LedgerId:  "general_ledger_id",
+				Currency:  "USD",
+				Indicator: "@cash flow",
+			},
+			wantErr: true,
+		},
+		{
+			name: "Indicator with leading/trailing spaces only",
+			balance: CreateBalance{
+				LedgerId:  "general_ledger_id",
+				Currency:  "USD",
+				Indicator: "  @cash  ",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Non-GL ledger with indicator set",
+			balance: CreateBalance{
+				LedgerId:  "some_other_ledger",
+				Currency:  "USD",
+				Indicator: "@cash",
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.balance.ValidateCreateBalance()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestCreateBalance_ToBalance_Indicator(t *testing.T) {
+	cb := CreateBalance{
+		LedgerId:  "general_ledger_id",
+		Currency:  "USD",
+		Indicator: "@cash",
+	}
+	require.NoError(t, cb.ValidateCreateBalance())
+
+	balance := cb.ToBalance()
+	assert.Equal(t, "@cash", balance.Indicator)
+}
+
+func TestValidateMonitorCondition(t *testing.T) {
+	tests := []struct {
+		name      string
+		condition MonitorCondition
+		wantErr   bool
+	}{
+		{
+			name: "Valid condition - balance",
+			condition: MonitorCondition{
+				Field:     "balance",
+				Operator:  ">",
+				Value:     100,
+				Precision: 100,
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid condition - credit_balance",
+			condition: MonitorCondition{
+				Field:     "credit_balance",
+				Operator:  "<",
+				Value:     500,
+				Precision: 100,
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid condition - debit_balance",
+			condition: MonitorCondition{
+				Field:     "debit_balance",
+				Operator:  ">=",
+				Value:     1,
+				Precision: 100,
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid condition - inflight_balance",
+			condition: MonitorCondition{
+				Field:     "inflight_balance",
+				Operator:  "<=",
+				Value:     1000,
+				Precision: 100,
+			},
+			wantErr: false,
+		},
+		{
+			name: "Invalid field",
+			condition: MonitorCondition{
+				Field:     "invalid_field",
+				Operator:  ">",
+				Value:     100,
+				Precision: 100,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Missing field",
+			condition: MonitorCondition{
+				Operator:  ">",
+				Value:     100,
+				Precision: 100,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Missing operator",
+			condition: MonitorCondition{
+				Field:     "balance",
+				Value:     100,
+				Precision: 100,
+			},
+			wantErr: true,
+		},
+		{
+			name: "Missing precision",
+			condition: MonitorCondition{
+				Field:    "balance",
+				Operator: ">",
+				Value:    100,
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.condition.ValidateMonitorCondition()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestToBalanceMonitor(t *testing.T) {
+	createMonitor := CreateBalanceMonitor{
+		BalanceId:   "bln_test_123",
+		CallBackURL: "https://example.com/webhook",
+		Condition: MonitorCondition{
+			Field:     "balance",
+			Operator:  ">",
+			Value:     1000,
+			Precision: 100,
+		},
+	}
+
+	monitor := createMonitor.ToBalanceMonitor()
+
+	assert.Equal(t, createMonitor.BalanceId, monitor.BalanceID)
+	assert.Equal(t, createMonitor.CallBackURL, monitor.CallBackURL)
+	assert.Equal(t, createMonitor.Condition.Field, monitor.Condition.Field)
+	assert.Equal(t, createMonitor.Condition.Operator, monitor.Condition.Operator)
+	assert.Equal(t, createMonitor.Condition.Value, monitor.Condition.Value)
+	assert.Equal(t, createMonitor.Condition.Precision, monitor.Condition.Precision)
+	// The request struct carries the caller's choice through untouched;
+	// model.NormalizeTrigger is the one place that resolves an unset one.
+	assert.Empty(t, monitor.Trigger)
+}
+
+func TestToBalanceMonitor_KeepsAnExplicitTrigger(t *testing.T) {
+	createMonitor := CreateBalanceMonitor{
+		BalanceId: "bln_test_123",
+		Trigger:   model.TriggerLevel,
+		Condition: MonitorCondition{Field: "balance", Operator: ">", Value: 1000, Precision: 100},
+	}
+
+	assert.Equal(t, model.TriggerLevel, createMonitor.ToBalanceMonitor().Trigger)
+}
+
+func TestValidateCreateBalanceMonitor_Trigger(t *testing.T) {
+	base := func(trigger string) CreateBalanceMonitor {
+		return CreateBalanceMonitor{
+			BalanceId: "bln_test_123",
+			Trigger:   trigger,
+			Condition: MonitorCondition{Field: "balance", Operator: ">", Value: 1000, Precision: 100},
+		}
+	}
+
+	for _, trigger := range []string{"", model.TriggerEdge, model.TriggerLevel} {
+		monitor := base(trigger)
+		assert.NoError(t, monitor.ValidateCreateBalanceMonitor(), "trigger %q must be accepted", trigger)
+	}
+
+	monitor := base("sometimes")
+	assert.Error(t, monitor.ValidateCreateBalanceMonitor())
+}
+
+func TestValidateMonitorCondition_AllowsAZeroThreshold(t *testing.T) {
+	// "balance > 0" and "balance != 0" are the most natural monitors there are,
+	// and a validator that treats zero as absent made all of them impossible.
+	for _, operator := range []string{">", "<", ">=", "<=", "=", "!="} {
+		condition := MonitorCondition{Field: "balance", Operator: operator, Value: 0, Precision: 100}
+		assert.NoError(t, condition.ValidateMonitorCondition(), "zero is a threshold like any other (%s)", operator)
+	}
+}
+
+func TestValidateMonitorCondition_RejectsUnsupportedOperators(t *testing.T) {
+	base := func(operator string) MonitorCondition {
+		return MonitorCondition{Field: "balance", Operator: operator, Value: 100, Precision: 100}
+	}
+
+	// The whole set the table's check constraint stores, all of which
+	// model.compare can now evaluate.
+	for _, operator := range []string{">", "<", ">=", "<=", "=", "!="} {
+		condition := base(operator)
+		assert.NoError(t, condition.ValidateMonitorCondition(), "operator %q must be accepted", operator)
+	}
+
+	// An operator the ledger cannot evaluate used to be stored happily and then
+	// never fire, which is worse than a rejection.
+	for _, operator := range []string{"==", "=>", "gt", "~"} {
+		condition := base(operator)
+		assert.Error(t, condition.ValidateMonitorCondition(), "operator %q must be rejected", operator)
+	}
+}
+
+func TestToBalanceMonitor_CarriesDescription(t *testing.T) {
+	createMonitor := CreateBalanceMonitor{
+		BalanceId:   "bln_test_123",
+		Description: "low balance alert",
+		Condition:   MonitorCondition{Field: "balance", Operator: "<", Value: 1000, Precision: 100},
+	}
+
+	assert.Equal(t, "low balance alert", createMonitor.ToBalanceMonitor().Description,
+		"description is a column and is settable on update, so create must be able to set it too")
+}
+
+func TestNormalizeTriggerIsTheOnlyDefault(t *testing.T) {
+	trigger, err := model.NormalizeTrigger("")
+	assert.NoError(t, err)
+	assert.Equal(t, model.TriggerEdge, trigger, "an unset trigger resolves to edge")
+
+	for _, valid := range []string{model.TriggerEdge, model.TriggerLevel} {
+		trigger, err := model.NormalizeTrigger(valid)
+		assert.NoError(t, err)
+		assert.Equal(t, valid, trigger, "an explicit trigger is carried through untouched")
+	}
+
+	_, err = model.NormalizeTrigger("sometimes")
+	assert.Error(t, err)
+}
+
+// TestSplitOnOneSideValidation pins that a transaction cannot split both
+// sides at once. SplitTransactionPrecise distributes over Sources when they
+// are present and Destinations otherwise, clearing both on the legs it
+// produces, so a transaction carrying both had its Destinations silently
+// dropped and every leg left with an empty Destination — reported downstream
+// as "Balance with ID ” not found", which names neither the field at fault
+// nor the reason.
+func TestSplitOnOneSideValidation(t *testing.T) {
+	tests := []struct {
+		name        string
+		transaction RecordTransaction
+		wantErr     bool
+	}{
+		{
+			name: "Invalid - both sources and destinations split",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Currency:    "USD",
+				Reference:   "ref_both",
+				Description: "d",
+				Sources: []model.Distribution{
+					{Identifier: "bln_a", Distribution: "60"},
+					{Identifier: "bln_b", Distribution: "40"},
+				},
+				Destinations: []model.Distribution{
+					{Identifier: "bln_c", Distribution: "60"},
+					{Identifier: "bln_d", Distribution: "40"},
+				},
+			},
+			wantErr: true,
+		},
+		{
+			name: "Valid - sources split only (fan-in)",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Currency:    "USD",
+				Reference:   "ref_fanin",
+				Description: "d",
+				Sources: []model.Distribution{
+					{Identifier: "bln_a", Distribution: "60"},
+					{Identifier: "bln_b", Distribution: "40"},
+				},
+				Destination: "bln_c",
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid - destinations split only (fan-out)",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Currency:    "USD",
+				Reference:   "ref_fanout",
+				Description: "d",
+				Source:      "bln_a",
+				Destinations: []model.Distribution{
+					{Identifier: "bln_c", Distribution: "60"},
+					{Identifier: "bln_d", Distribution: "40"},
+				},
+			},
+			wantErr: false,
+		},
+		{
+			name: "Valid - neither side split",
+			transaction: RecordTransaction{
+				Amount:      100,
+				Currency:    "USD",
+				Reference:   "ref_plain",
+				Description: "d",
+				Source:      "bln_a",
+				Destination: "bln_b",
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.transaction.ValidateRecordTransaction()
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

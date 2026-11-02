@@ -1,0 +1,429 @@
+/*
+Copyright 2024 Blnk Finance Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+	http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+package model
+
+import (
+	"errors"
+	"math"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/sirupsen/logrus"
+
+	"github.com/blnkfinance/blnk/model"
+
+	validation "github.com/go-ozzo/ozzo-validation/v4"
+)
+
+var ErrPrecisionMustBeInteger = errors.New("precision must be an integer value")
+
+func validatePrecisionIsInteger(value interface{}) error {
+	precision, ok := value.(float64)
+	if !ok {
+		return errors.New("invalid precision type")
+	}
+
+	if math.Trunc(precision) != precision {
+		return ErrPrecisionMustBeInteger
+	}
+
+	return nil
+}
+
+// validatePrecisionNotNegative rejects a negative precision.
+//
+// Precision is a scaling factor — "the number you used to convert the
+// smallest unit to an integer" — so it is only meaningful as a positive
+// value. Zero is left valid because it means "not supplied" and is
+// defaulted to 1 downstream (see model.ApplyPrecision).
+//
+// A negative precision is not merely meaningless, it is load-bearing for
+// the bypass described on validateAmountNotNegative below: it flips the
+// sign of the computed precise amount.
+func validatePrecisionNotNegative(value interface{}) error {
+	precision, ok := value.(float64)
+	if !ok {
+		return errors.New("invalid precision type")
+	}
+
+	if precision < 0 {
+		return errors.New("precision cannot be negative")
+	}
+
+	return nil
+}
+
+// validateAmountNotNegative rejects negative amounts on both the float
+// `amount` field and the big.Int `precise_amount` field.
+//
+// The ledger's intent is that amounts are positive — model.Transaction's own
+// validate() reports "transaction amount must be positive" — but that check
+// runs deep in the apply path and, for `amount`, is unreachable: by the time
+// it runs, PreciseAmount has been computed and its non-nil branch returns
+// early. That left the effective guard against a negative `amount` to be an
+// unrelated split-distribution check firing by accident on a negative total.
+//
+// That accidental guard is bypassable, because precision multiplies:
+//
+//	amount(-25) x precision(-100) = precise_amount(+2500)
+//
+// The product is positive, so every downstream positivity check passes, and
+// the transaction applies — while `amount: -25` and `precision: -100` are
+// persisted as sent. The stored record then reports the opposite sign of the
+// movement it describes, and is invisible to an `amount > 0` filter.
+//
+// Zero amount is still the sentinel for "use precise_amount instead".
+// A zero precise_amount is rejected in ValidateRecordTransaction.
+func validateAmountNotNegative(t *RecordTransaction) validation.RuleFunc {
+	return func(value interface{}) error {
+		if t.Amount < 0 {
+			return errors.New("amount cannot be negative")
+		}
+		if t.PreciseAmount != nil && t.PreciseAmount.Sign() < 0 {
+			return errors.New("precise_amount cannot be negative")
+		}
+		return nil
+	}
+}
+
+func sourceOrSourcesValidation(t *RecordTransaction) validation.RuleFunc {
+	return func(value interface{}) error {
+		if (t.Source == "" && len(t.Sources) == 0) || (t.Source != "" && len(t.Sources) > 0) {
+			return errors.New("either source or sources is required, not both")
+		}
+		return nil
+	}
+}
+
+func destinationOrDestinationsValidation(t *RecordTransaction) validation.RuleFunc {
+	return func(value interface{}) error {
+		if (t.Destination == "" && len(t.Destinations) == 0) || (t.Destination != "" && len(t.Destinations) > 0) {
+			return errors.New("either destination or destinations is required, not both")
+		}
+		return nil
+	}
+}
+
+// splitOnOneSideValidation rejects a transaction that splits both sides at
+// once.
+//
+// SplitTransactionPrecise distributes over one side only — it takes Sources
+// when they are present and Destinations otherwise — and clears both on the
+// legs it produces. A transaction carrying both therefore has its
+// Destinations silently dropped, and every leg is left with an empty
+// Destination, which surfaces downstream as a lookup for a balance with a
+// blank id:
+//
+//	Balance with ID '' not found
+//
+// That names neither the field at fault nor the reason, for a request the
+// ledger cannot express in the first place. Reject it where the shape is
+// still visible.
+func splitOnOneSideValidation(t *RecordTransaction) validation.RuleFunc {
+	return func(value interface{}) error {
+		if len(t.Sources) > 0 && len(t.Destinations) > 0 {
+			return errors.New("a transaction can split either sources or destinations, not both")
+		}
+		return nil
+	}
+}
+
+// sameBalanceValidation rejects a source and destination that resolve to the
+// same balance, whether directly or through a split.
+//
+// updateBalance guards each row with optimistic locking: UPDATE ... WHERE
+// balance_id = $1 AND version = $N. Source and destination are fetched as
+// two independent balance reads, both carrying the row's version from
+// before either update runs. When they name the same row, the first UPDATE
+// advances the version and the second's WHERE version=<now stale> clause
+// matches nothing — a deterministic conflict every single time this is
+// attempted, not a rare race. Rejecting it here, before any balance is
+// fetched, avoids both the confusing downstream "optimistic locking
+// failure" (which reads as a transient race, not a guaranteed one) and,
+// on the default queued path, several retry cycles spent on a transaction
+// that can never succeed.
+func sameBalanceValidation(t *RecordTransaction) validation.RuleFunc {
+	return func(value interface{}) error {
+		const msg = "source and destination cannot be the same balance"
+
+		if t.Source != "" && t.Destination != "" && t.Source == t.Destination {
+			return errors.New(msg)
+		}
+		if t.Source != "" {
+			for _, d := range t.Destinations {
+				if d.Identifier == t.Source {
+					return errors.New(msg)
+				}
+			}
+		}
+		if t.Destination != "" {
+			for _, s := range t.Sources {
+				if s.Identifier == t.Destination {
+					return errors.New(msg)
+				}
+			}
+		}
+		return nil
+	}
+}
+
+func (l *CreateLedger) ValidateCreateLedger() error {
+	return validation.ValidateStruct(l,
+		validation.Field(&l.Name, validation.Required),
+	)
+}
+
+func (l *UpdateLedger) ValidateUpdateLedger() error {
+	return validation.ValidateStruct(l,
+		validation.Field(&l.Name, validation.Required),
+	)
+}
+
+func validateDateFormat(format, value string) error {
+	_, err := time.Parse(format, value)
+	if err != nil {
+		return errors.New("please format the scheduled date as 'YYYY-MM-DDTHH:MM:SS+00:00' (e.g., 2024-04-22T15:28:03+00:00)")
+	}
+	return nil
+}
+
+// generalLedgerID is the well-known ledger ID for General Ledger (@) balances.
+// Only balances under this ledger may be pre-provisioned with an explicit indicator.
+const generalLedgerID = "general_ledger_id"
+
+// indicatorPattern validates optional balance indicators: must start with "@"
+// and contain no whitespace
+var indicatorPattern = regexp.MustCompile(`^@\S+$`)
+
+func (b *CreateBalance) ValidateCreateBalance() error {
+	// Normalize allocation strategy: trim and uppercase
+	if b.AllocationStrategy != "" {
+		b.AllocationStrategy = strings.TrimSpace(strings.ToUpper(b.AllocationStrategy))
+	}
+
+	// Trim surrounding whitespace only; internal whitespace remains invalid.
+	if b.Indicator != "" {
+		b.Indicator = strings.TrimSpace(b.Indicator)
+	}
+
+	isGeneralLedger := b.LedgerId == generalLedgerID
+
+	return validation.ValidateStruct(b,
+		validation.Field(&b.LedgerId, validation.Required),
+		validation.Field(&b.Currency, validation.Required),
+		validation.Field(&b.IdentityId, validation.When(b.TrackFundLineage, validation.Required.Error("identity_id is required when track_fund_lineage is enabled"))),
+		validation.Field(&b.AllocationStrategy, validation.When(b.AllocationStrategy != "", validation.In("FIFO", "LIFO", "PROPORTIONAL").Error("allocation_strategy must be one of: FIFO, LIFO, PROPORTIONAL"))),
+		validation.Field(&b.Indicator,
+			validation.When(b.Indicator != "" && !isGeneralLedger,
+				validation.By(func(value interface{}) error {
+					return errors.New("indicator is only allowed for General Ledger balances (ledger_id = general_ledger_id)")
+				}),
+			),
+			validation.When(b.Indicator != "" && isGeneralLedger,
+				validation.Match(indicatorPattern).Error("indicator must start with '@' and contain no whitespace (e.g. '@cash')"),
+			),
+		),
+	)
+}
+
+func (b *CreateBalanceMonitor) ValidateCreateBalanceMonitor() error {
+	return validation.ValidateStruct(b,
+		validation.Field(&b.BalanceId, validation.Required),
+		validation.Field(&b.Condition, validation.Required, validation.By(func(value interface{}) error {
+			// Convert the interface{} to MonitorCondition type
+			condition, ok := value.(MonitorCondition)
+			if !ok {
+				// Handle the case where the value cannot be converted
+				return errors.New("invalid condition type")
+			}
+			// Call the ValidateMonitorCondition method
+			return condition.ValidateMonitorCondition()
+		})),
+		validation.Field(&b.Trigger, validation.By(func(value interface{}) error {
+			trigger, ok := value.(string)
+			if !ok {
+				return errors.New("invalid trigger type")
+			}
+			_, err := model.NormalizeTrigger(trigger)
+			return err
+		})),
+	)
+}
+
+func (c *MonitorCondition) ValidateMonitorCondition() error {
+	return validation.ValidateStruct(c,
+		validation.Field(&c.Field, validation.Required, validation.In("debit_balance", "credit_balance", "balance", "inflight_debit_balance", "inflight_credit_balance", "inflight_balance")),
+		validation.Field(&c.Operator, validation.Required, validation.In(">", "<", ">=", "<=", "=", "!=")),
+		validation.Field(&c.Precision, validation.Required, validation.By(validatePrecisionNotNegative)),
+		// Value is deliberately not Required: ozzo treats a zero number as
+		// absent, which made every threshold at zero unexpressible -- no
+		// "balance > 0", no "balance != 0", no "balance <= 0". Precision keeps
+		// the rule because a zero multiplier is meaningless, a zero threshold
+		// is not.
+	)
+}
+
+func (t *RecordTransaction) ValidateRecordTransaction() error {
+	return validation.ValidateStruct(t,
+		validation.Field(&t.Amount, validation.By(func(value interface{}) error {
+			if t.Amount != 0 && t.PreciseAmount != nil {
+				return errors.New("either amount or precise_amount should be provided, not both")
+			}
+			if t.Amount == 0 && t.PreciseAmount == nil {
+				return errors.New("either amount or precise_amount is required")
+			}
+			if t.PreciseAmount != nil && t.PreciseAmount.Sign() == 0 {
+				return errors.New("precise_amount must be positive")
+			}
+
+			// Check for high precision amounts that might lead to rounding errors
+			if t.Amount != 0 {
+				// Convert to string to check significant digits
+				amountStr := strconv.FormatFloat(t.Amount, 'f', -1, 64)
+
+				// Remove decimal point for counting significant digits
+				amountStr = strings.Replace(amountStr, ".", "", 1)
+
+				// Remove leading zeros which aren't significant
+				amountStr = strings.TrimLeft(amountStr, "0")
+
+				// Count significant digits
+				significantDigits := len(amountStr)
+
+				// If more than 15 significant digits, warn about potential rounding errors
+				if significantDigits > 15 {
+					return errors.New("amount has more than 15 significant digits which may cause rounding errors; use precise_amount instead")
+				}
+			}
+
+			return nil
+		}), validation.By(validateAmountNotNegative(t))),
+		validation.Field(&t.Precision, validation.By(validatePrecisionIsInteger), validation.By(validatePrecisionNotNegative)),
+		validation.Field(&t.Currency, validation.Required),
+		validation.Field(&t.Reference, validation.Required),
+		validation.Field(&t.Description, validation.Required),
+		validation.Field(&t.Source, validation.By(sourceOrSourcesValidation(t)), validation.By(splitOnOneSideValidation(t))),
+		validation.Field(&t.Destination, validation.By(destinationOrDestinationsValidation(t)), validation.By(sameBalanceValidation(t))),
+		validation.Field(&t.ScheduledFor, validation.When(t.ScheduledFor != "", validation.By(func(value interface{}) error {
+			dateStr, ok := value.(string)
+			if !ok {
+				return errors.New("invalid type for scheduled date")
+			}
+			return validateDateFormat("2006-01-02T15:04:05Z07:00", dateStr)
+		})),
+		),
+		validation.Field(&t.InflightExpiryDate, validation.When(t.InflightExpiryDate != "", validation.By(func(value interface{}) error {
+			dateStr, ok := value.(string)
+			if !ok {
+				return errors.New("invalid type for scheduled date")
+			}
+			return validateDateFormat("2006-01-02T15:04:05Z07:00", dateStr)
+		})),
+		),
+		validation.Field(&t.InflightCommitDate, validation.When(t.InflightCommitDate != "", validation.By(func(value interface{}) error {
+			dateStr, ok := value.(string)
+			if !ok {
+				return errors.New("invalid type for scheduled date")
+			}
+			return validateDateFormat("2006-01-02T15:04:05Z07:00", dateStr)
+		})),
+		),
+	)
+}
+
+func (a *CreateAccount) ValidateCreateAccount() error {
+	return validation.ValidateStruct(a,
+		validation.Field(&a.LedgerId, validation.When(a.BalanceId == "", validation.Required.Error("Ledger ID is required when Balance ID is not provided"))),
+		validation.Field(&a.IdentityId, validation.When(a.BalanceId == "", validation.Required.Error("Identity ID is required when Balance ID is not provided"))),
+		validation.Field(&a.Currency, validation.When(a.BalanceId == "", validation.Required.Error("currency is required when Balance ID is not provided"))),
+		validation.Field(&a.LedgerId, validation.By(func(value interface{}) error {
+			if a.BalanceId != "" && a.LedgerId != "" {
+				return errors.New("either LedgerId or BalanceId must be provided, not both")
+			}
+			return nil
+		})),
+		validation.Field(&a.Currency, validation.By(func(value interface{}) error {
+			if a.BalanceId != "" && a.Currency != "" {
+				return errors.New("either Currency or BalanceId must be provided, not both")
+			}
+			return nil
+		})),
+	)
+}
+
+func (l *CreateLedger) ToLedger() model.Ledger {
+	return model.Ledger{Name: l.Name, MetaData: l.MetaData}
+}
+
+func (b *CreateBalance) ToBalance() model.Balance {
+	allocationStrategy := b.AllocationStrategy
+	if allocationStrategy == "" {
+		allocationStrategy = "FIFO"
+	}
+	return model.Balance{LedgerID: b.LedgerId, IdentityID: b.IdentityId, Currency: b.Currency, MetaData: b.MetaData, TrackFundLineage: b.TrackFundLineage, AllocationStrategy: allocationStrategy, Indicator: b.Indicator}
+}
+
+func (b *CreateBalanceMonitor) ToBalanceMonitor() model.BalanceMonitor {
+	return model.BalanceMonitor{BalanceID: b.BalanceId, Condition: model.AlertCondition{
+		Field:     b.Condition.Field,
+		Operator:  b.Condition.Operator,
+		Value:     b.Condition.Value,
+		Precision: b.Condition.Precision,
+	}, CallBackURL: b.CallBackURL, Description: b.Description, Trigger: b.Trigger}
+}
+
+func (a *CreateAccount) ToAccount() model.Account {
+	return model.Account{BalanceID: a.BalanceId, LedgerID: a.LedgerId, IdentityID: a.IdentityId, Currency: a.Currency, Number: a.Number, BankName: a.BankName, MetaData: a.MetaData}
+}
+
+func (t *RecordTransaction) ToTransaction() *model.Transaction {
+	var scheduledFor time.Time
+	var inflightExpiryDate time.Time
+	var inflightCommitDate time.Time
+
+	if t.ScheduledFor != "" {
+		scheduledTime, err := time.Parse("2006-01-02T15:04:05Z07:00", t.ScheduledFor)
+		if err != nil {
+			logrus.Error(err)
+		}
+
+		scheduledFor = scheduledTime
+
+	}
+
+	if t.InflightExpiryDate != "" {
+		inflightExpiry, err := time.Parse("2006-01-02T15:04:05Z07:00", t.InflightExpiryDate)
+		if err != nil {
+			logrus.Error(err)
+		}
+
+		inflightExpiryDate = inflightExpiry
+
+	}
+
+	if t.InflightCommitDate != "" {
+		inflightCommit, err := time.Parse("2006-01-02T15:04:05Z07:00", t.InflightCommitDate)
+		if err != nil {
+			logrus.Error(err)
+		}
+
+		inflightCommitDate = inflightCommit
+	}
+
+	return &model.Transaction{Currency: t.Currency, Source: t.Source, Description: t.Description, Reference: t.Reference, ScheduledFor: scheduledFor, Destination: t.Destination, Amount: t.Amount, AllowOverdraft: t.AllowOverDraft, MetaData: t.MetaData, Sources: t.Sources, Destinations: t.Destinations, Inflight: t.Inflight, Precision: t.Precision, InflightExpiryDate: inflightExpiryDate, InflightCommitDate: inflightCommitDate, SkipQueue: t.SkipQueue, EffectiveDate: t.EffectiveDate, OverdraftLimit: t.OverdraftLimit, PreciseAmount: t.PreciseAmount, Atomic: t.Atomic}
+}

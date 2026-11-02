@@ -1,0 +1,14 @@
+{
+  "version": "v0.15.7",
+  "commit": "a127d489497ea79e76393bacb110dba7bfe5c81f",
+  "codigo_local_compilado": true,
+  "api_http": 200,
+  "worker_salud": "UP",
+  "transferencia_directa": "APPLIED",
+  "transferencia_cola_padre": "txn_0eb3becb-848a-4bd5-a295-7069fa2c868f",
+  "transferencia_cola_hija": "txn_4add3622-0cfd-4a47-b224-553c4990af22",
+  "transferencia_cola_estado": "APPLIED",
+  "saldo_a_usd": 990,
+  "saldo_b_usd": 10,
+  "verificado_utc": "2026-10-26T19:22:46.7216983Z"
+}

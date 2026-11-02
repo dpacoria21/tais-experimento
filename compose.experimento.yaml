@@ -1,0 +1,66 @@
+name: experimento-blnk
+x-blnk: &blnk
+  image: experimento/blnk:0.15.7-local
+  build:
+    context: .
+    dockerfile: Dockerfile.experimento
+  volumes:
+    - ./blnk.experimento.json:/app/blnk.json:ro
+  environment:
+    TZ: UTC
+services:
+  postgres:
+    image: postgres:16-bookworm
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: blnk_local
+      POSTGRES_DB: blnk
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d blnk"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+  redis:
+    image: redis:7.2.4
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+  migrate:
+    <<: *blnk
+    command: ["migrate", "up"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  server:
+    <<: *blnk
+    command: ["start"]
+    ports:
+      - "127.0.0.1:5001:5001"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+  worker:
+    <<: *blnk
+    command: ["workers"]
+    ports:
+      - "127.0.0.1:5004:5004"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+volumes:
+  postgres_data:
+  redis_data:

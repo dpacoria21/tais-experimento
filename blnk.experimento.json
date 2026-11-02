@@ -1,0 +1,12 @@
+{
+  "project_name": "Experimento de concurrencia",
+  "data_source": {
+    "dns": "postgres://postgres:blnk_local@postgres:5432/blnk?sslmode=disable"
+  },
+  "redis": { "dns": "redis:6379" },
+  "server": {
+    "port": "5001",
+    "secure": true,
+    "secret_key": "blnk-experimento-local"
+  }
+}

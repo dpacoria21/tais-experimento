@@ -1,0 +1,21 @@
+@base = http://localhost:5001
+@key = blnk-experimento-local
+
+### Libros contables
+GET {{base}}/ledgers
+X-Blnk-Key: {{key}}
+
+### Crear un libro
+POST {{base}}/ledgers
+X-Blnk-Key: {{key}}
+Content-Type: application/json
+
+{"name":"Laboratorio de concurrencia"}
+
+### Saldos
+GET {{base}}/balances
+X-Blnk-Key: {{key}}
+
+### Transacciones
+GET {{base}}/transactions
+X-Blnk-Key: {{key}}

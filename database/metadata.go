@@ -1,0 +1,250 @@
+package database
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+
+	"github.com/blnkfinance/blnk/internal/apierror"
+	"github.com/blnkfinance/blnk/model"
+)
+
+// UpdateLedgerMetadata merges the provided metadata into the ledger's existing
+// metadata inside the database, so two concurrent updates to different keys both
+// survive. The caller passes only the keys to change; keys it omits are left as
+// they are, and a key set to JSON null stays present with a null value.
+//
+// Parameters:
+// - id: The ID of the ledger to update.
+// - metadata: The keys to set.
+//
+// Returns:
+//   - map[string]interface{}: The note stored after this statement, including keys
+//     another update committed before this one.
+//   - error: An error if the update operation fails.
+func (d *Datasource) UpdateLedgerMetadata(id string, metadata map[string]interface{}) (map[string]interface{}, error) {
+	// A nil map marshals as JSON null. Concatenating that with an object yields
+	// an array, so a missing patch is an empty object instead.
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	// Both sides are coerced to an object first: jsonb concatenation of a
+	// non-object (a JSON null or a scalar) with an object yields an array.
+	// A key whose value is JSON null is still an object, and that key stays.
+	// RETURNING is the note this statement saved, not the copy read beforehand.
+	var raw []byte
+	err = d.Conn.QueryRowContext(context.Background(), `
+		UPDATE blnk.ledgers
+		SET meta_data = (CASE WHEN jsonb_typeof(meta_data) = 'object' THEN meta_data ELSE '{}'::jsonb END)
+			|| (CASE WHEN jsonb_typeof($1::jsonb) = 'object' THEN $1::jsonb ELSE '{}'::jsonb END)
+		WHERE ledger_id = $2
+		RETURNING meta_data
+	`, metadataJSON, id).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	return decodeMetadataObject(raw)
+}
+
+// UpdateTransactionMetadata updates the metadata for a specific transaction in the database.
+// It merges the provided metadata with existing metadata for each matching transaction.
+// The update applies to both the transaction with the provided ID and any transactions
+// where this ID is set as the parent_transaction.
+//
+// Parameters:
+// - ctx: The context for the database operation.
+// - id: The ID of the transaction to update.
+// - metadata: The new metadata to merge with existing metadata.
+//
+// Returns:
+// - error: An error if the update operation fails.
+func (d *Datasource) UpdateTransactionMetadata(ctx context.Context, id string, metadata map[string]interface{}) error {
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	// Merge into the existing metadata rather than replacing it. The left operand
+	// is coerced to an object first: jsonb concatenation of a non-object (a JSON
+	// null from a transaction stored without metadata, or a scalar) with an object
+	// yields an array, which corrupts the column.
+	_, err = d.Conn.ExecContext(ctx, `
+		UPDATE blnk.transactions
+		SET meta_data = (CASE WHEN jsonb_typeof(meta_data) = 'object' THEN meta_data ELSE '{}'::jsonb END) || $1::jsonb
+		WHERE transaction_id = $2 OR parent_transaction = $2
+	`, metadataJSON, id)
+	return err
+}
+
+// ListTransactionsByMetadataScope returns every transaction row that
+// UpdateTransactionMetadata would touch for scopeID: the row whose
+// transaction_id matches, and any row whose parent_transaction matches.
+// Used after a metadata write to reindex Typesense without calling
+// GetTransaction(scopeID), which misses bulk parent IDs.
+func (d *Datasource) ListTransactionsByMetadataScope(ctx context.Context, scopeID string, limit int, offset int64) ([]*model.Transaction, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := d.Conn.QueryContext(ctx, `
+		SELECT transaction_id, parent_transaction, source, reference, amount, precise_amount, precision,
+			   currency, destination, description, status, created_at, effective_date, meta_data, scheduled_for, hash
+		FROM blnk.transactions
+		WHERE transaction_id = $1 OR parent_transaction = $1
+		ORDER BY transaction_id
+		LIMIT $2 OFFSET $3
+	`, scopeID, limit, offset)
+	if err != nil {
+		return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to list transactions for metadata scope", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var transactions []*model.Transaction
+	for rows.Next() {
+		transaction := &model.Transaction{}
+		var metaDataJSON []byte
+		var preciseAmountStr string
+		// Root txn_ rows store parent_transaction as NULL (and often scheduled_for
+		// too). Scanning those into string/time.Time fails the whole reindex.
+		var parentTransaction sql.NullString
+		var effectiveDate sql.NullTime
+		var scheduledFor sql.NullTime
+		if err := rows.Scan(
+			&transaction.TransactionID,
+			&parentTransaction,
+			&transaction.Source,
+			&transaction.Reference,
+			&transaction.Amount,
+			&preciseAmountStr,
+			&transaction.Precision,
+			&transaction.Currency,
+			&transaction.Destination,
+			&transaction.Description,
+			&transaction.Status,
+			&transaction.CreatedAt,
+			&effectiveDate,
+			&metaDataJSON,
+			&scheduledFor,
+			&transaction.Hash,
+		); err != nil {
+			return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to scan transaction data", err)
+		}
+		transaction.ParentTransaction = nullableString(parentTransaction)
+		if effectiveDate.Valid {
+			transaction.EffectiveDate = &effectiveDate.Time
+		}
+		if scheduledFor.Valid {
+			transaction.ScheduledFor = scheduledFor.Time
+		}
+		// SQL NULL meta_data is a nil slice; skip rather than failing the page.
+		// After UpdateTransactionMetadata the column is an object, so this is
+		// only a guard for legacy/empty rows in the same scope.
+		if len(metaDataJSON) > 0 {
+			if err := json.Unmarshal(metaDataJSON, &transaction.MetaData); err != nil {
+				return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Failed to unmarshal metadata", err)
+			}
+		}
+		transaction.PreciseAmount, err = parseBigInt(preciseAmountStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse precise_amount: %w", err)
+		}
+		transactions = append(transactions, transaction)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, apierror.NewAPIError(apierror.ErrInternalServer, "Error occurred while iterating over transactions", err)
+	}
+	return transactions, nil
+}
+
+// UpdateBalanceMetadata merges the provided metadata into the balance's existing
+// metadata inside the database, so two concurrent updates to different keys both
+// survive. The caller passes only the keys to change; keys it omits are left as
+// they are, and a key set to JSON null stays present with a null value.
+//
+// Parameters:
+// - ctx: The context for the database operation.
+// - id: The ID of the balance to update.
+// - metadata: The keys to set.
+//
+// Returns:
+// - error: An error if the update operation fails.
+func (d *Datasource) UpdateBalanceMetadata(ctx context.Context, id string, metadata map[string]interface{}) error {
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+
+	// The left operand is coerced to an object first: jsonb concatenation of a
+	// non-object (a JSON null or a scalar) with an object yields an array.
+	_, err = d.Conn.ExecContext(ctx, `
+		UPDATE blnk.balances
+		SET meta_data = (CASE WHEN jsonb_typeof(meta_data) = 'object' THEN meta_data ELSE '{}'::jsonb END) || $1::jsonb
+		WHERE balance_id = $2
+	`, metadataJSON, id)
+	return err
+}
+
+// UpdateIdentityMetadata merges the provided metadata into the identity's existing
+// metadata inside the database, so two concurrent updates to different keys both
+// survive. The caller passes only the keys to change. tokenized_fields is owned
+// by field tokenization and is removed from the patch before the merge, so this
+// write cannot replace or clear that record.
+//
+// Parameters:
+// - id: The ID of the identity to update.
+// - metadata: The keys to set.
+//
+// Returns:
+//   - map[string]interface{}: The note stored after this statement, including keys
+//     another update committed before this one.
+//   - error: An error if the update operation fails.
+func (d *Datasource) UpdateIdentityMetadata(id string, metadata map[string]interface{}) (map[string]interface{}, error) {
+	// A nil map marshals as JSON null. Removing a key from that null errors,
+	// and concatenating it with an object yields an array, so a missing patch
+	// is an empty object instead.
+	if metadata == nil {
+		metadata = map[string]interface{}{}
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	// Both sides are coerced to an object first. tokenized_fields is removed
+	// from the patch only after that, so a null patch cannot fail the delete.
+	// RETURNING is the note this statement saved, not the copy read beforehand.
+	var raw []byte
+	err = d.Conn.QueryRowContext(context.Background(), `
+		UPDATE blnk.identity
+		SET meta_data = (CASE WHEN jsonb_typeof(meta_data) = 'object' THEN meta_data ELSE '{}'::jsonb END)
+			|| ((CASE WHEN jsonb_typeof($1::jsonb) = 'object' THEN $1::jsonb ELSE '{}'::jsonb END) - 'tokenized_fields')
+		WHERE identity_id = $2
+		RETURNING meta_data
+	`, metadataJSON, id).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	return decodeMetadataObject(raw)
+}
+
+// decodeMetadataObject reads a jsonb object returned by an update. A SQL null
+// or a JSON null becomes an empty object so callers can range over the result.
+func decodeMetadataObject(raw []byte) (map[string]interface{}, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return map[string]interface{}{}, nil
+	}
+	var meta map[string]interface{}
+	if err := json.Unmarshal(raw, &meta); err != nil {
+		return nil, err
+	}
+	if meta == nil {
+		return map[string]interface{}{}, nil
+	}
+	return meta, nil
+}

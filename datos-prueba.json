@@ -1,0 +1,13 @@
+{
+  "api": "http://localhost:5001",
+  "ledger_id": "ldg_ca54ef2b-c79d-4990-a2a1-7223bba38dbd",
+  "cuenta_a": "bln_d0b14457-5a45-4cd0-b32d-cb4922c4220b",
+  "cuenta_b": "bln_e9789130-a745-40ba-96dc-29dd33fedb3e",
+  "currency": "USD",
+  "precision": 100,
+  "saldo_a_unidades_menores": 99000,
+  "saldo_b_unidades_menores": 1000,
+  "fondeo_id": "txn_b99e905f-f888-47cc-82fa-04d7e5684661",
+  "transferencia_id": "txn_43eca7fa-5b7b-4521-9366-4de8a2636c2f",
+  "verificado_utc": "2026-10-26T19:19:07.8493823Z"
+}

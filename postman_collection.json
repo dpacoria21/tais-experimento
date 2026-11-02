@@ -1,0 +1,143 @@
+{
+  "info": {
+    "name": "Blnk - Laboratorio local",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "request": {
+        "url": "{{base}}/ledgers",
+        "method": "GET",
+        "header": [
+          {
+            "value": "{{api_key}}",
+            "key": "X-Blnk-Key"
+          }
+        ]
+      },
+      "name": "Listar ledgers"
+    },
+    {
+      "request": {
+        "url": "{{base}}/balances",
+        "method": "GET",
+        "header": [
+          {
+            "value": "{{api_key}}",
+            "key": "X-Blnk-Key"
+          }
+        ]
+      },
+      "name": "Listar balances"
+    },
+    {
+      "request": {
+        "url": "{{base}}/transactions",
+        "method": "GET",
+        "header": [
+          {
+            "value": "{{api_key}}",
+            "key": "X-Blnk-Key"
+          }
+        ]
+      },
+      "name": "Listar transactions"
+    },
+    {
+      "request": {
+        "url": "{{base}}/balances/{{cuenta_a}}",
+        "method": "GET",
+        "header": [
+          {
+            "value": "{{api_key}}",
+            "key": "X-Blnk-Key"
+          }
+        ]
+      },
+      "name": "Consultar cuenta A"
+    },
+    {
+      "request": {
+        "url": "{{base}}/balances/{{cuenta_b}}",
+        "method": "GET",
+        "header": [
+          {
+            "value": "{{api_key}}",
+            "key": "X-Blnk-Key"
+          }
+        ]
+      },
+      "name": "Consultar cuenta B"
+    },
+    {
+      "request": {
+        "url": "{{base}}/transactions",
+        "method": "POST",
+        "body": {
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          },
+          "mode": "raw",
+          "raw": "{\"source\":\"{{cuenta_a}}\",\"destination\":\"{{cuenta_b}}\",\"amount\":1,\"precision\":100,\"currency\":\"USD\",\"reference\":\"{{$guid}}\",\"description\":\"Prueba manual\",\"skip_queue\":true}"
+        },
+        "header": [
+          {
+            "value": "{{api_key}}",
+            "key": "X-Blnk-Key"
+          },
+          {
+            "value": "application/json",
+            "key": "Content-Type"
+          }
+        ]
+      },
+      "name": "Transferir USD 1 de A a B (directo)"
+    },
+    {
+      "request": {
+        "url": "{{base}}/transactions",
+        "method": "POST",
+        "body": {
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          },
+          "mode": "raw",
+          "raw": "{\"source\":\"{{cuenta_a}}\",\"destination\":\"{{cuenta_b}}\",\"amount\":1,\"precision\":100,\"currency\":\"USD\",\"reference\":\"{{$guid}}\",\"description\":\"Prueba manual con cola\",\"skip_queue\":false}"
+        },
+        "header": [
+          {
+            "value": "{{api_key}}",
+            "key": "X-Blnk-Key"
+          },
+          {
+            "value": "application/json",
+            "key": "Content-Type"
+          }
+        ]
+      },
+      "name": "Transferir USD 1 de A a B (cola)"
+    }
+  ],
+  "variable": [
+    {
+      "value": "http://localhost:5001",
+      "key": "base"
+    },
+    {
+      "value": "blnk-experimento-local",
+      "key": "api_key"
+    },
+    {
+      "value": "bln_d0b14457-5a45-4cd0-b32d-cb4922c4220b",
+      "key": "cuenta_a"
+    },
+    {
+      "value": "bln_e9789130-a745-40ba-96dc-29dd33fedb3e",
+      "key": "cuenta_b"
+    }
+  ]
+}
