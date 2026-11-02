@@ -8,32 +8,25 @@ Las peticiones modifican datos reales del laboratorio. Los archivos `datos-prueb
 
 ```text
 tais-art/
-├── MANUAL-PRUEBAS.md          este manual
-├── blnk/                      código de Blnk y archivos del laboratorio
-│   ├── experimento.ps1        iniciar, detener, probar y reconstruir
-│   ├── compose.experimento.yaml
-│   ├── blnk.experimento.json  configuración local (puerto, clave, BD, Redis)
-│   ├── preparar-datos.ps1     crea un libro y dos cuentas de prueba
-│   ├── datos-prueba.json      IDs de las cuentas usadas por Postman
-│   ├── postman_collection.json  colección de Postman
-│   ├── peticiones.http        peticiones para clientes REST de VS Code
-│   └── LEEME-EXPERIMENTO.md   detalles de la instalación
-├── pruebas/                   pruebas de carga concurrente
-│   ├── ejecutar.ps1           orquesta la prueba y verifica saldos
-│   ├── concurrencia.js        script de carga k6
-│   ├── datos/                 cuentas separadas para las pruebas de carga
-│   └── resultados/            informes generados por cada corrida
-└── outputs/                   material de la revisión bibliográfica
+└── blnk/                        código de Blnk y archivos del laboratorio
+    ├── MANUAL-PRUEBAS.md        este manual
+    ├── experimento.ps1          iniciar, detener, probar y reconstruir
+    ├── compose.experimento.yaml
+    ├── blnk.experimento.json    configuración local (puerto, clave, BD, Redis)
+    ├── preparar-datos.ps1       crea un libro y dos cuentas de prueba
+    ├── datos-prueba.json        IDs de las cuentas de prueba
+    ├── postman_collection.json  colección de Postman del experimento
+    ├── peticiones.http          peticiones para clientes REST de VS Code
+    └── LEEME-EXPERIMENTO.md     detalles de la instalación
 ```
 
-- **`pruebas/`**: contiene las pruebas de carga. `ejecutar.ps1` lanza muchas transferencias simultáneas con k6, consulta los saldos antes y después y guarda un informe en `pruebas/resultados/`. Ver la sección 6.
-- **`outputs/`**: no forma parte de la aplicación ni de las pruebas. Guarda el trabajo de la revisión de literatura del 30 de septiembre de 2026: clasificación de artículos sobre deadlocks (`deadlocks-20260930/`) y el informe del Hito 1 con sus evidencias (`resultados-20260930/`).
+Los comandos de este manual se ejecutan desde la carpeta `tais-art`.
 
 ## 2. Ejecutar el proyecto
 
 ### 2.1. Requisitos
 
-Necesitas Docker Desktop con el motor Linux iniciado. No necesitas instalar Go, k6 ni PostgreSQL en Windows: todo se compila y ejecuta dentro de Docker.
+Necesitas Docker Desktop con el motor Linux iniciado. No necesitas instalar Go ni PostgreSQL en Windows: todo se compila y ejecuta dentro de Docker.
 
 Comprueba Docker:
 
@@ -140,45 +133,83 @@ C:\Users\diego\OneDrive\Desktop\tais-art\blnk\postman_collection.json
 
 1. Abre Postman y elige **Import**.
 2. Selecciona `blnk\postman_collection.json`.
-3. Aparece la colección **"Blnk - Laboratorio local"** en el panel izquierdo.
+3. Aparece la colección **"Blnk - Experimento de concurrencia"** en el panel izquierdo.
 
-### 4.3. Variables
+Si ya habías importado una versión anterior, elimínala de Postman o reemplázala al importar: el nombre cambió.
+
+### 4.3. Autenticación y variables
+
+La colección envía `X-Blnk-Key: {{api_key}}` en todas las peticiones. Está configurada en la pestaña **Authorization** de la colección; cada petición la hereda.
 
 Las variables ya vienen dentro de la colección; no tienes que crearlas. Para verlas, haz clic en el nombre de la colección y abre la pestaña **Variables**.
 
-| Variable | Valor | Uso |
+| Variable | Valor inicial | Uso |
 |---|---|---|
 | `base` | `http://localhost:5001` | URL de la API. |
-| `api_key` | `blnk-experimento-local` | Valor de la cabecera `X-Blnk-Key`. |
-| `cuenta_a` | ID de la cuenta A | Origen de las transferencias. |
-| `cuenta_b` | ID de la cuenta B | Destino de las transferencias. |
+| `worker_base` | `http://localhost:5004` | URL del worker. |
+| `api_key` | `blnk-experimento-local` | Clave maestra. |
+| `cuenta_a` | Cuenta A de `datos-prueba.json` | Origen de las transferencias. **01 Preparación** la reemplaza. |
+| `cuenta_b` | Cuenta B de `datos-prueba.json` | Destino de las transferencias. **01 Preparación** la reemplaza. |
 
-Son variables de colección: funcionan aunque Postman indique "No environment". Si creas cuentas nuevas, copia sus IDs desde `datos-prueba.json` a `cuenta_a` y `cuenta_b` y guarda con Ctrl+S.
+Las demás variables (`ledger_id`, `transaction_id`, `transaction_ref`, `inflight_id`, `inflight_void_id`, `ref_repetida`, etc.) empiezan vacías. Las peticiones las llenan solas con un script de su pestaña **Scripts**, así que conviene ejecutar las carpetas en orden.
 
-`{{$guid}}`, usado en el campo `reference`, es una variable dinámica de Postman: genera una referencia nueva en cada envío.
+Son variables de colección: funcionan aunque Postman indique "No environment". `{{$guid}}`, usado en el campo `reference`, es una variable dinámica de Postman: genera una referencia nueva en cada envío.
 
-### 4.4. Peticiones incluidas
+### 4.4. Carpetas
 
-| Petición | Método y ruta |
+La colección solo contiene lo necesario para el experimento: 29 peticiones que crean saldos, mueven dinero o verifican saldos.
+
+| Carpeta | Contenido |
 |---|---|
-| Listar ledgers | `GET /ledgers` |
-| Listar balances | `GET /balances` |
-| Listar transactions | `GET /transactions` |
-| Consultar cuenta A | `GET /balances/{{cuenta_a}}` |
-| Consultar cuenta B | `GET /balances/{{cuenta_b}}` |
-| Transferir USD 1 de A a B (directo) | `POST /transactions` con `skip_queue: true` |
-| Transferir USD 1 de A a B (cola) | `POST /transactions` con `skip_queue: false` |
+| 00 Salud | Servidor y worker en marcha. Ejecútala antes de cada corrida. |
+| 01 Preparación | Crea un ledger y las cuentas A y B, fondea A con USD 1,000 y transfiere USD 10 a B. Deja A = 990 y B = 10, igual que `preparar-datos.ps1`. |
+| 02 Verificación | Consultas sin efectos: saldos de A y B (también con la cola), número de transferencias aplicadas en cada sentido, transacciones pendientes en cola y búsqueda por ID o referencia. |
+| 03 Operaciones bajo prueba | Cada tipo de operación que conviene someter a concurrencia (tabla siguiente). |
+| 04 Recuperación | Reprocesa transacciones atascadas en `QUEUED`. |
 
-### 4.5. Primera prueba
+| Operación (03) | Resultado esperado | Qué pone a prueba bajo concurrencia |
+|---|---|---|
+| Transferir USD 1 de A a B (directo) | 201, `APPLIED` | Caso base: bloqueo y actualización de dos saldos. |
+| Transferir USD 1 de B a A (directo) | 201, `APPLIED` | Combinada con A→B a la vez, bloquea las mismas cuentas en orden inverso: escenario de interbloqueo. |
+| Transferir USD 1 de A a B (cola) | 201, `QUEUED` | Coordinación mediante Redis y el worker. |
+| Referencia repetida (dos envíos) | 201 y luego 409 `TXN_DUPLICATE_REFERENCE` | Idempotencia: dos envíos simultáneos no deberían aplicarse ambos. |
+| Fondos insuficientes | 400 | Varias transferencias que juntas superan el saldo no deberían dejar A en negativo. |
+| Inflight: reservar, confirmar y anular | 201 y 200 | Reservas simultáneas sobre el mismo saldo. |
+| Lote atómico A→B y B→A | 201 | Bloqueo de varios saldos en una sola operación. |
+| Reembolsar dos veces | 201 y luego 409 `TXN_ALREADY_REFUNDED` | Dos reembolsos simultáneos del mismo movimiento no deberían aplicarse ambos. |
+
+Postman ejecuta las peticiones **una tras otra**: sirve para comprobar que cada operación funciona y para verificar saldos, pero no genera concurrencia. Para medirla, lanza esas mismas peticiones en paralelo con una herramienta de carga, como k6 o JMeter.
+
+### 4.5. Flujo de una réplica
+
+1. **00 Salud**: el servidor y el worker deben responder.
+2. **01 Preparación**: crea cuentas nuevas en 990/10. Sáltala si quieres usar las cuentas de `datos-prueba.json`.
+3. **02 Verificación**: anota los saldos iniciales y el número de transferencias aplicadas.
+4. Ejecuta la carga concurrente sobre `cuenta_a` y `cuenta_b`. Copia sus IDs desde la pestaña **Variables**.
+5. **02 Verificación** otra vez: comprueba que A final = A inicial − confirmadas × monto, que B final = B inicial + confirmadas × monto y que ningún saldo sea negativo.
+6. Si usaste la cola y quedan transacciones en `QUEUED`, espera al worker o ejecuta **04 Recuperación**.
+
+Los saldos en USD aparecen en la **Console** de Postman (abajo a la izquierda), y cada consulta de saldo comprueba que no sea negativo.
+
+Al interpretar una corrida:
+
+- No uses las cuentas de la corrida en Postman mientras la carga está en marcha: cualquier otro movimiento altera el cálculo.
+- Si hubo rechazos y los saldos coinciden, la integridad es correcta aunque no se aceptaran todas las solicitudes. Registra por separado confirmadas, rechazadas y errores.
+- Los rechazos (400, 409, 422, 423 o 429) no siempre son conflictos de concurrencia: revisa el cuerpo de la respuesta.
+- Si aparece un timeout o una respuesta 5xx, el resultado de esa petición es incierto. Antes de repetirla, búscala con **Obtener transacción por referencia** y revisa los logs.
+
+Para comprobar las operaciones antes del experimento, haz clic derecho en la colección, elige **Run collection** y pulsa **Run**. Todas las peticiones deben pasar sus tests, incluidos los rechazos esperados (400 y 409). La carpeta 03 mueve dinero entre A y B, así que ejecútala sobre cuentas recién preparadas, no sobre las de una corrida que vayas a medir.
+
+### 4.6. Primera prueba manual
 
 1. Comprueba que Blnk esté corriendo (sección 2.3).
-2. Ejecuta **Consultar cuenta A** y **Consultar cuenta B**, y anota los saldos.
-3. Ejecuta una sola vez **Transferir USD 1 de A a B (directo)**. La respuesta debe indicar estado `APPLIED`.
+2. En **02 Verificación**, ejecuta **Consultar cuenta A** y **Consultar cuenta B**, y anota los saldos.
+3. En **03 Operaciones**, ejecuta una sola vez **Transferir USD 1 de A a B (directo)**. La respuesta debe indicar estado `APPLIED`.
 4. Vuelve a consultar ambas cuentas: A debe bajar 100 unidades (USD 1) y B debe subir 100.
 
 Cada envío de una transferencia mueve dinero.
 
-### 4.6. Transferencias por cola
+### 4.7. Transferencias por cola
 
 - **Directa** (`skip_queue: true`): la respuesta indica `APPLIED`; consulta los saldos.
 - **Por cola** (`skip_queue: false`): la respuesta `QUEUED` solo indica que el trabajo fue recibido. Espera a que el worker lo procese y consulta los saldos.
@@ -221,93 +252,9 @@ Invoke-RestMethod "$($b.api)/transactions" `
     -Method Post -Headers $hb -ContentType 'application/json' -Body $body
 ```
 
-Se espera estado `APPLIED`. Repite la consulta de saldos. Para probar la cola cambia `skip_queue` a `$false`, genera una referencia nueva y sigue lo descrito en la sección 4.6.
+Se espera estado `APPLIED`. Repite la consulta de saldos. Para probar la cola cambia `skip_queue` a `$false`, genera una referencia nueva y sigue lo descrito en la sección 4.7.
 
-## 6. Pruebas de carga concurrente
-
-Estas pruebas lanzan muchas transferencias simultáneas de A a B y comprueban que los saldos finales coincidan con las transferencias confirmadas. El script descarga y ejecuta k6 1.0.0 dentro de Docker.
-
-### 6.1. Preparar cuentas separadas
-
-Usa un juego de cuentas distinto del de Postman, para que las pruebas manuales no alteren la verificación:
-
-```powershell
-New-Item -ItemType Directory -Path .\pruebas\datos -Force | Out-Null
-
-.\blnk\preparar-datos.ps1 -Nuevo `
-    -ArchivoSalida "$PWD\pruebas\datos\blnk.json"
-```
-
-El juego nuevo queda en A=USD 990 y B=USD 10. Para repetir desde ese punto, crea otro juego antes de cada réplica; si guardas cada uno en un archivo distinto, podrás consultar sus cuentas después.
-
-### 6.2. Ejecutar
-
-```powershell
-.\pruebas\ejecutar.ps1 -Proyecto blnk `
-    -Usuarios 5 -Solicitudes 10 -Monto 1 -Etiqueta original `
-    -ArchivoDatos .\pruebas\datos\blnk.json
-```
-
-| Parámetro | Significado |
-|---|---|
-| `Proyecto` | `blnk`. |
-| `Usuarios` | Usuarios virtuales concurrentes, entre 1 y 100. No puede superar `Solicitudes`. |
-| `Solicitudes` | Total de transferencias entre todos los usuarios; no es la cantidad por usuario. |
-| `Monto` | USD por transferencia; positivo y con hasta dos decimales. |
-| `Etiqueta` | Nombre de la variante, por ejemplo `original`, `optimista` o `pesimista`. Solo etiqueta el informe. |
-| `ArchivoDatos` | JSON con los IDs de las cuentas. Si se omite, usa `blnk\datos-prueba.json`. |
-
-El script:
-
-1. Comprueba que A tenga saldo para toda la carga.
-2. Ejecuta k6 dentro de la red Docker del proyecto.
-3. Consulta los saldos finales y los compara con las confirmaciones.
-4. Guarda los resultados en `pruebas/resultados/`.
-
-No reintenta las peticiones fallidas. Todas las transferencias usan la misma pareja A→B, por lo que hay contención sobre esas dos cuentas. Las corridas usan procesamiento directo (`skip_queue=true`): no miden la finalización por cola, aunque los bloqueos Redis y el control optimista siguen activos.
-
-Si las diez transferencias de USD 1 se confirman y el juego empezó en 990/10, el resultado debe ser A=980 y B=20. Una segunda corrida parte de esos nuevos saldos.
-
-### 6.3. Interpretar los informes
-
-Cada corrida genera dos archivos en `pruebas/resultados/`, con nombre único por etiqueta y corrida:
-
-- `*-k6.json`: métricas de k6, tasas y latencias HTTP.
-- `*-verificacion.json`: cuentas usadas, saldos antes y después, conteos de respuestas, verificación y commit Git.
-
-Para abrir la verificación más reciente:
-
-```powershell
-$ultimo = Get-ChildItem .\pruebas\resultados\*-verificacion.json |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
-Get-Content $ultimo.FullName -Raw | ConvertFrom-Json | Format-List
-```
-
-| Campo | Cómo leerlo |
-|---|---|
-| `confirmadas` | Transferencias aplicadas reconocidas por el generador. |
-| `rechazadas` | Respuestas 400, 409, 422, 423 o 429. Revisa sus cuerpos: no todas son conflictos de concurrencia. |
-| `errores` | Otros errores, respuestas inesperadas o fallos de transporte. |
-| `saldos_coinciden` | Los saldos observados coinciden con los calculados a partir de las confirmaciones. |
-| `carga_completa` | El total clasificado coincide con las solicitudes pedidas. |
-| `duracion_http_ms` | Latencias en milisegundos (mediana, p95, p99). Incluye respuestas rechazadas. |
-| `transferencias_confirmadas_por_segundo` | Tasa de confirmaciones reportada por k6. |
-
-El cálculo es:
-
-```text
-A esperada = A inicial - confirmadas × monto
-B esperada = B inicial + confirmadas × monto
-```
-
-Además se exige que A no quede negativa. Esto supone que no hay comisiones ni otros movimientos simultáneos: no uses esas cuentas en Postman durante una corrida.
-
-Si hubo rechazos y los saldos coinciden, la integridad puede ser correcta aunque no se aceptaran todas las solicitudes. Un código de salida correcto no significa aceptación del 100 %: consulta ambos conteos.
-
-Si aparece un timeout o una respuesta 5xx, revisa los logs y los movimientos persistidos antes de repetir: el resultado de esa petición puede ser incierto. El script conserva el informe y no corrige saldos.
-
-## 7. Pruebas funcionales adicionales
+## 6. Pruebas funcionales adicionales
 
 | Prueba | Procedimiento | Qué verificar |
 |---|---|---|
@@ -315,14 +262,14 @@ Si aparece un timeout o una respuesta 5xx, revisa los logs y los movimientos per
 | Transferencia válida | Transferir USD 1 de A a B. | A baja 1; B sube 1; la suma se mantiene. |
 | Fondos insuficientes | En Postman, enviar un monto mayor que el saldo de A, sin sobregiro. | Mensaje de rechazo y saldos sin cambios. |
 | Referencia repetida | Reenviar la misma petición con la misma `reference`. | Que no se aplique un segundo movimiento; registrar la respuesta. |
-| Transferencias simultáneas | Ejecutar la sección 6. | Correspondencia entre confirmaciones y movimientos persistidos. |
+| Transferencias simultáneas | Lanzar en paralelo las operaciones de la carpeta 03 con una herramienta de carga. | Correspondencia entre confirmaciones y movimientos persistidos (carpeta 02). |
 | Procesamiento por cola | Enviar `skip_queue=false`. | Trabajo aplicado por el worker, relación padre/hija y saldos finales. |
 
-Para explorar interbloqueos, una prueba posterior puede mezclar transferencias A→B y B→A. El generador incluido solo hace A→B; esa ampliación debe cambiar también el cálculo de saldos esperados. Para medir baja contención usa varias parejas de cuentas independientes.
+Para explorar interbloqueos, mezcla transferencias A→B y B→A en la misma carga; el saldo esperado de cada cuenta debe considerar ambos sentidos. Para medir baja contención usa varias parejas de cuentas independientes.
 
-## 8. Comparar técnicas de concurrencia
+## 7. Comparar técnicas de concurrencia
 
-Primero registra la versión original. Después prepara cada variante y conserva su código y configuración. Cambiar `-Etiqueta` no modifica el algoritmo.
+Primero registra la versión original. Después prepara cada variante y conserva su código y configuración.
 
 | Variante propuesta | Intervención |
 |---|---|
@@ -345,24 +292,18 @@ Después de editar código, reconstruye y comprueba:
 .\blnk\experimento.ps1 probar
 ```
 
-Luego crea cuentas nuevas (sección 6.1) y ejecuta la misma carga con otra etiqueta:
-
-```powershell
-.\pruebas\ejecutar.ps1 -Proyecto blnk `
-    -Usuarios 5 -Solicitudes 10 -Monto 1 -Etiqueta pesimista `
-    -ArchivoDatos .\pruebas\datos\blnk.json
-```
+Luego prepara cuentas nuevas (carpeta **01 Preparación** de Postman o `.\blnk\preparar-datos.ps1 -Nuevo`), ejecuta la misma carga que con la versión original y verifica con la carpeta **02 Verificación**.
 
 Para el experimento formal:
 
 1. Mantén constantes versión de base de datos, recursos, pool de conexiones, monto, tamaño de datos y política de reintentos, salvo la variable que estudias.
 2. Usa calentamiento, varias réplicas y orden alternado o aleatorio de variantes. Diez solicitudes sirven para comprobar el montaje; para interpretar percentiles necesitas más observaciones.
-3. Conserva código, imagen construida, configuración, registros de error y resultados. El informe guarda el commit y la lista de cambios Git; eso no equivale a una copia completa de la variante.
+3. Conserva código, imagen construida, configuración, registros de error y resultados de cada variante.
 4. Registra por separado rendimiento, rechazos e integridad. No concluyas que una técnica mejora si acelera a costa de perder movimientos.
 
-El generador comprueba cambios de saldos y detecta desajustes con las confirmaciones. Una evaluación contable completa debe revisar también asientos, identificadores, duplicados y resultados persistidos de operaciones con errores.
+La verificación de saldos detecta desajustes con las confirmaciones. Una evaluación contable completa debe revisar también asientos, identificadores, duplicados y resultados persistidos de operaciones con errores.
 
-## 9. Problemas frecuentes
+## 8. Problemas frecuentes
 
 | Síntoma | Acción |
 |---|---|
@@ -373,32 +314,14 @@ El generador comprueba cambios de saldos y detecta desajustes con las confirmaci
 | HTTP 404 al abrir la raíz | Usa una ruta concreta de la API con su cabecera. |
 | Saldo cien veces mayor | Divide `balance` entre `precision`. |
 | La cola recibe la petición pero no la aplica | Revisa salud y logs del worker y relaciona las transacciones padre/hija. |
-| La carga se rechaza por saldo insuficiente | Crea otro juego de datos o reduce monto o solicitudes. |
+| Las transferencias se rechazan por saldo insuficiente | Prepara cuentas nuevas (carpeta 01) o reduce el monto o el número de solicitudes. |
 | Los cambios de código no aparecen | Ejecuta `reconstruir`; reiniciar el contenedor no compila código nuevo. |
-| La red Docker de k6 no existe | Inicia el proyecto con `experimento.ps1 iniciar`. |
 | PowerShell bloquea un archivo `.ps1` | Usa los comandos `docker compose` de la sección 2.5, o habilita scripts según la política de tu equipo. |
 
-## 10. Archivos y fuentes
+## 9. Archivos y fuentes
 
 - `blnk/LEEME-EXPERIMENTO.md`: configuración de la instalación.
-- `blnk/postman_collection.json`: colección de Postman.
-- `pruebas/ejecutar.ps1`: orquestación, lectura de saldos y verificación.
-- `pruebas/concurrencia.js`: carga HTTP de k6.
-- `pruebas/datos/`: juegos de cuentas para las pruebas de carga.
-- `pruebas/resultados/`: resultados de cada corrida.
+- `blnk/postman_collection.json`: colección de Postman del experimento.
+- `blnk/preparar-datos.ps1` y `blnk/datos-prueba.json`: cuentas de prueba.
 - [Código de Blnk](https://github.com/blnkfinance/blnk).
 - [Concurrencia en Blnk](https://docs.blnkfinance.com/guides/concurrency).
-- [Executor shared-iterations de k6](https://grafana.com/docs/k6/latest/using-k6/scenarios/executors/shared-iterations/): número total de iteraciones compartido entre usuarios virtuales.
-- [Resultados de k6](https://grafana.com/docs/k6/latest/results-output/end-of-test/): resumen de métricas al finalizar.
-
-## 11. Comprobación realizada al preparar este manual
-
-El 26 de octubre de 2026 se ejecutó la carga incluida con dos usuarios virtuales y cuatro transferencias de USD 1:
-
-| Confirmadas | Rechazadas | Errores | A inicial → final | B inicial → final | Coincidencia de saldos |
-|---:|---:|---:|---|---|---|
-| 4 | 0 | 0 | 990 → 986 | 10 → 14 | Correcta |
-
-Esta corrida comprobó el generador y la verificación; su tamaño no permite comparar rendimiento estadísticamente. El informe está en `pruebas/resultados/` con la etiqueta `verificacion`.
-
-Se usaron las cuentas de `pruebas/datos/blnk.json`, que quedaron en 986/14. Las cuentas de la colección de Postman se verificaron por separado y conservaron 990/10. Para seguir los ejemplos desde el punto inicial, crea otro juego como indica la sección 6.1.

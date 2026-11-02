@@ -1,143 +1,1401 @@
 {
   "info": {
-    "name": "Blnk - Laboratorio local",
+    "name": "Blnk - Experimento de concurrencia",
+    "description": "Peticiones para preparar, ejecutar y verificar el experimento de concurrencia sobre transferencias.\n\nFlujo: 00 Salud → 01 Preparación (cuentas nuevas en 990/10) → 02 Verificación (saldos iniciales) → carga concurrente → 02 Verificación (saldos finales).\n\n03 Operaciones contiene cada tipo de operación que conviene someter a concurrencia, para comprobar antes que funciona de forma individual. Postman las ejecuta una tras otra: no genera concurrencia.\n\nLa colección envía X-Blnk-Key: {{api_key}} en cada petición.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      {
+        "key": "key",
+        "value": "X-Blnk-Key",
+        "type": "string"
+      },
+      {
+        "key": "value",
+        "value": "{{api_key}}",
+        "type": "string"
+      },
+      {
+        "key": "in",
+        "value": "header",
+        "type": "string"
+      }
+    ]
   },
   "item": [
     {
-      "request": {
-        "url": "{{base}}/ledgers",
-        "method": "GET",
-        "header": [
-          {
-            "value": "{{api_key}}",
-            "key": "X-Blnk-Key"
-          }
-        ]
-      },
-      "name": "Listar ledgers"
-    },
-    {
-      "request": {
-        "url": "{{base}}/balances",
-        "method": "GET",
-        "header": [
-          {
-            "value": "{{api_key}}",
-            "key": "X-Blnk-Key"
-          }
-        ]
-      },
-      "name": "Listar balances"
-    },
-    {
-      "request": {
-        "url": "{{base}}/transactions",
-        "method": "GET",
-        "header": [
-          {
-            "value": "{{api_key}}",
-            "key": "X-Blnk-Key"
-          }
-        ]
-      },
-      "name": "Listar transactions"
-    },
-    {
-      "request": {
-        "url": "{{base}}/balances/{{cuenta_a}}",
-        "method": "GET",
-        "header": [
-          {
-            "value": "{{api_key}}",
-            "key": "X-Blnk-Key"
-          }
-        ]
-      },
-      "name": "Consultar cuenta A"
-    },
-    {
-      "request": {
-        "url": "{{base}}/balances/{{cuenta_b}}",
-        "method": "GET",
-        "header": [
-          {
-            "value": "{{api_key}}",
-            "key": "X-Blnk-Key"
-          }
-        ]
-      },
-      "name": "Consultar cuenta B"
-    },
-    {
-      "request": {
-        "url": "{{base}}/transactions",
-        "method": "POST",
-        "body": {
-          "options": {
-            "raw": {
-              "language": "json"
+      "name": "00 Salud",
+      "description": "Ejecútala antes de cada corrida: servidor y worker deben responder.",
+      "item": [
+        {
+          "name": "Servidor en marcha",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/",
+              "host": [
+                "{{base}}"
+              ],
+              "path": []
+            },
+            "description": "Responde \"server running...\". No requiere autenticación.",
+            "auth": {
+              "type": "noauth"
             }
           },
-          "mode": "raw",
-          "raw": "{\"source\":\"{{cuenta_a}}\",\"destination\":\"{{cuenta_b}}\",\"amount\":1,\"precision\":100,\"currency\":\"USD\",\"reference\":\"{{$guid}}\",\"description\":\"Prueba manual\",\"skip_queue\":true}"
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});"
+                ]
+              }
+            }
+          ]
         },
-        "header": [
-          {
-            "value": "{{api_key}}",
-            "key": "X-Blnk-Key"
-          },
-          {
-            "value": "application/json",
-            "key": "Content-Type"
-          }
-        ]
-      },
-      "name": "Transferir USD 1 de A a B (directo)"
-    },
-    {
-      "request": {
-        "url": "{{base}}/transactions",
-        "method": "POST",
-        "body": {
-          "options": {
-            "raw": {
-              "language": "json"
+        {
+          "name": "Salud del worker",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{worker_base}}/health",
+              "host": [
+                "{{worker_base}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Debe responder status UP. El worker procesa las transferencias por cola.",
+            "auth": {
+              "type": "noauth"
             }
           },
-          "mode": "raw",
-          "raw": "{\"source\":\"{{cuenta_a}}\",\"destination\":\"{{cuenta_b}}\",\"amount\":1,\"precision\":100,\"currency\":\"USD\",\"reference\":\"{{$guid}}\",\"description\":\"Prueba manual con cola\",\"skip_queue\":false}"
-        },
-        "header": [
-          {
-            "value": "{{api_key}}",
-            "key": "X-Blnk-Key"
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "pm.test(\"Worker UP\", function () { pm.expect(json.status).to.eql(\"UP\"); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 Preparación",
+      "description": "Crea un juego nuevo de cuentas con el mismo estado inicial que preparar-datos.ps1: A = USD 990 y B = USD 10.\n\nSobrescribe las variables ledger_id, cuenta_a y cuenta_b. Ejecútala antes de cada réplica para partir siempre del mismo estado. Si prefieres las cuentas de blnk/datos-prueba.json, sáltala.",
+      "item": [
+        {
+          "name": "Crear ledger",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/ledgers",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "ledgers"
+              ]
+            },
+            "description": "Libro contable que agrupa las dos cuentas del experimento.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Experimento concurrencia {{$timestamp}}\",\n  \"meta_data\": {\n    \"origen\": \"postman\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
-          {
-            "value": "application/json",
-            "key": "Content-Type"
-          }
-        ]
-      },
-      "name": "Transferir USD 1 de A a B (cola)"
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json[\"ledger_id\"]) { pm.collectionVariables.set(\"ledger_id\", json[\"ledger_id\"]); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Crear cuenta A",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/balances",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "balances"
+              ]
+            },
+            "description": "Saldo en USD con precisión 100 (1 USD = 100 unidades).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ledger_id\": \"{{ledger_id}}\",\n  \"currency\": \"USD\",\n  \"precision\": 100,\n  \"meta_data\": {\n    \"nombre\": \"Cuenta A\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json[\"balance_id\"]) { pm.collectionVariables.set(\"cuenta_a\", json[\"balance_id\"]); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Crear cuenta B",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/balances",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "balances"
+              ]
+            },
+            "description": "Saldo en USD con precisión 100.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ledger_id\": \"{{ledger_id}}\",\n  \"currency\": \"USD\",\n  \"precision\": 100,\n  \"meta_data\": {\n    \"nombre\": \"Cuenta B\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json[\"balance_id\"]) { pm.collectionVariables.set(\"cuenta_b\", json[\"balance_id\"]); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Fondear A con USD 1,000",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "@world representa dinero que entra desde fuera del sistema; necesita allow_overdraft.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"@world\",\n  \"destination\": \"{{cuenta_a}}\",\n  \"amount\": 1000,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{$guid}}\",\n  \"description\": \"Fondeo del experimento\",\n  \"allow_overdraft\": true,\n  \"skip_queue\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transferir USD 10 de A a B",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "Deja el estado inicial del laboratorio: A = 990, B = 10.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"{{cuenta_a}}\",\n  \"destination\": \"{{cuenta_b}}\",\n  \"amount\": 10,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{$guid}}\",\n  \"description\": \"Estado inicial A a B\",\n  \"allow_overdraft\": false,\n  \"skip_queue\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json[\"transaction_id\"]) { pm.collectionVariables.set(\"transaction_id\", json[\"transaction_id\"]); }",
+                  "if (json[\"reference\"]) { pm.collectionVariables.set(\"transaction_ref\", json[\"reference\"]); }"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "02 Verificación",
+      "description": "Consultas sin efectos. Úsalas antes y después de cada corrida para comprobar que:\nA final = A inicial − confirmadas × monto, B final = B inicial + confirmadas × monto, y ningún saldo es negativo.\n\nLa pestaña Console de Postman muestra los saldos en USD.",
+      "item": [
+        {
+          "name": "Consultar cuenta A",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/balances/{{cuenta_a}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "balances",
+                "{{cuenta_a}}"
+              ]
+            },
+            "description": "balance está en unidades menores: 99000 = USD 990."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json.balance !== undefined) {",
+                  "    const usd = Number(json.balance) / Number(json.precision || 100);",
+                  "    console.log(pm.info.requestName + ': USD ' + usd);",
+                  "    pm.test(\"Saldo no negativo (USD \" + usd + \")\", function () {",
+                  "        pm.expect(usd).to.be.at.least(0);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar cuenta B",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/balances/{{cuenta_b}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "balances",
+                "{{cuenta_b}}"
+              ]
+            },
+            "description": "balance está en unidades menores."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json.balance !== undefined) {",
+                  "    const usd = Number(json.balance) / Number(json.precision || 100);",
+                  "    console.log(pm.info.requestName + ': USD ' + usd);",
+                  "    pm.test(\"Saldo no negativo (USD \" + usd + \")\", function () {",
+                  "        pm.expect(usd).to.be.at.least(0);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Consultar cuenta A incluyendo la cola",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/balances/{{cuenta_a}}?with_queued=true",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "balances",
+                "{{cuenta_a}}"
+              ],
+              "query": [
+                {
+                  "key": "with_queued",
+                  "value": "true",
+                  "description": null
+                }
+              ]
+            },
+            "description": "with_queued=true suma los montos aún en cola. Si difiere de la consulta normal, el worker no ha terminado."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json.balance !== undefined) {",
+                  "    const usd = Number(json.balance) / Number(json.precision || 100);",
+                  "    console.log(pm.info.requestName + ': USD ' + usd);",
+                  "    pm.test(\"Saldo no negativo (USD \" + usd + \")\", function () {",
+                  "        pm.expect(usd).to.be.at.least(0);",
+                  "    });",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transferencias aplicadas de A a B",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions/filter",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions",
+                "filter"
+              ]
+            },
+            "description": "Cuenta las transferencias confirmadas (total_count). Compáralo con el cambio de saldos.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filters\": [\n    {\n      \"field\": \"source\",\n      \"operator\": \"eq\",\n      \"value\": \"{{cuenta_a}}\"\n    },\n    {\n      \"field\": \"destination\",\n      \"operator\": \"eq\",\n      \"value\": \"{{cuenta_b}}\"\n    },\n    {\n      \"field\": \"status\",\n      \"operator\": \"eq\",\n      \"value\": \"APPLIED\"\n    }\n  ],\n  \"limit\": 100,\n  \"include_count\": true,\n  \"sort_by\": \"created_at\",\n  \"sort_order\": \"desc\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const filas = Array.isArray(json) ? json : (json.data || []);",
+                  "console.log(pm.info.requestName + ': ' + filas.length + ' filas' + (json.total_count !== undefined ? ', total ' + json.total_count : ''));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transferencias aplicadas de B a A",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions/filter",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions",
+                "filter"
+              ]
+            },
+            "description": "Igual que la anterior, en sentido contrario.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filters\": [\n    {\n      \"field\": \"source\",\n      \"operator\": \"eq\",\n      \"value\": \"{{cuenta_b}}\"\n    },\n    {\n      \"field\": \"destination\",\n      \"operator\": \"eq\",\n      \"value\": \"{{cuenta_a}}\"\n    },\n    {\n      \"field\": \"status\",\n      \"operator\": \"eq\",\n      \"value\": \"APPLIED\"\n    }\n  ],\n  \"limit\": 100,\n  \"include_count\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const filas = Array.isArray(json) ? json : (json.data || []);",
+                  "console.log(pm.info.requestName + ': ' + filas.length + ' filas' + (json.total_count !== undefined ? ', total ' + json.total_count : ''));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transacciones pendientes en cola",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions/filter",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions",
+                "filter"
+              ]
+            },
+            "description": "Solicitudes por cola que siguen en QUEUED. Recuerda que la solicitud padre queda QUEUED aunque su hija esté APPLIED.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filters\": [\n    {\n      \"field\": \"source\",\n      \"operator\": \"in\",\n      \"values\": [\n        \"{{cuenta_a}}\",\n        \"{{cuenta_b}}\"\n      ]\n    },\n    {\n      \"field\": \"status\",\n      \"operator\": \"eq\",\n      \"value\": \"QUEUED\"\n    }\n  ],\n  \"limit\": 100,\n  \"include_count\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "const filas = Array.isArray(json) ? json : (json.data || []);",
+                  "console.log(pm.info.requestName + ': ' + filas.length + ' filas' + (json.total_count !== undefined ? ', total ' + json.total_count : ''));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Obtener transacción",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/transactions/{{transaction_id}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": "Última transferencia guardada en transaction_id (01 Preparación o 03 Operaciones)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Obtener transacción por referencia",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/transactions/reference/{{transaction_ref}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions",
+                "reference",
+                "{{transaction_ref}}"
+              ]
+            },
+            "description": "Busca por la referencia del cliente. Sirve para comprobar si una petición con resultado incierto se aplicó."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "03 Operaciones bajo prueba",
+      "description": "Cada petición ejercita una parte distinta del manejo de concurrencia. Aquí se ejecutan de una en una (comprobación funcional); para medir concurrencia hay que lanzarlas en paralelo con una herramienta de carga.\n\nTodas mueven dinero real entre A y B.",
+      "item": [
+        {
+          "name": "Transferir USD 1 de A a B (directo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "Caso base: bloqueo y actualización de dos saldos. skip_queue=true aplica la transferencia en la misma petición.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"{{cuenta_a}}\",\n  \"destination\": \"{{cuenta_b}}\",\n  \"amount\": 1,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{$guid}}\",\n  \"description\": \"Experimento A a B\",\n  \"allow_overdraft\": false,\n  \"skip_queue\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json[\"transaction_id\"]) { pm.collectionVariables.set(\"transaction_id\", json[\"transaction_id\"]); }",
+                  "if (json[\"reference\"]) { pm.collectionVariables.set(\"transaction_ref\", json[\"reference\"]); }",
+                  "pm.test(\"Estado APPLIED\", function () { pm.expect(json.status).to.eql(\"APPLIED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transferir USD 1 de B a A (directo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "Sentido contrario. A→B y B→A al mismo tiempo bloquean las mismas cuentas en orden inverso: es el escenario de interbloqueo.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"{{cuenta_b}}\",\n  \"destination\": \"{{cuenta_a}}\",\n  \"amount\": 1,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{$guid}}\",\n  \"description\": \"Experimento B a A\",\n  \"allow_overdraft\": false,\n  \"skip_queue\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "pm.test(\"Estado APPLIED\", function () { pm.expect(json.status).to.eql(\"APPLIED\"); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Transferir USD 1 de A a B (cola)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "Coordinación mediante Redis y el worker. Responde QUEUED; el worker crea después una transacción hija APPLIED.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"{{cuenta_a}}\",\n  \"destination\": \"{{cuenta_b}}\",\n  \"amount\": 1,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{$guid}}\",\n  \"description\": \"Experimento A a B por cola\",\n  \"allow_overdraft\": false,\n  \"skip_queue\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json[\"transaction_id\"]) { pm.collectionVariables.set(\"transaction_cola_id\", json[\"transaction_id\"]); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Referencia repetida: primer envío",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "Genera una referencia nueva y la guarda en ref_repetida. Debe aplicarse.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"{{cuenta_a}}\",\n  \"destination\": \"{{cuenta_b}}\",\n  \"amount\": 1,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{ref_repetida}}\",\n  \"description\": \"Idempotencia primer envío\",\n  \"allow_overdraft\": false,\n  \"skip_queue\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"ref_repetida\", \"idem-\" + pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Referencia repetida: segundo envío",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "Misma referencia. Debe rechazarse con 409 TXN_DUPLICATE_REFERENCE y no mover dinero. Bajo concurrencia, dos envíos simultáneos con la misma referencia no deberían aplicarse ambos.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"{{cuenta_a}}\",\n  \"destination\": \"{{cuenta_b}}\",\n  \"amount\": 1,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{ref_repetida}}\",\n  \"description\": \"Idempotencia segundo envío\",\n  \"allow_overdraft\": false,\n  \"skip_queue\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (409)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([409]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Fondos insuficientes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "Monto mayor que el saldo, sin sobregiro. Debe rechazarse (400) sin cambiar saldos. Bajo concurrencia, varias transferencias que juntas superan el saldo no deberían dejar A en negativo.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"{{cuenta_a}}\",\n  \"destination\": \"{{cuenta_b}}\",\n  \"amount\": 999999,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{$guid}}\",\n  \"description\": \"Fondos insuficientes\",\n  \"allow_overdraft\": false,\n  \"skip_queue\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (400)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([400]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Inflight: reservar USD 2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "inflight=true reserva el monto sin aplicarlo. Pone a prueba reservas concurrentes sobre el mismo saldo.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"{{cuenta_a}}\",\n  \"destination\": \"{{cuenta_b}}\",\n  \"amount\": 2,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{$guid}}\",\n  \"description\": \"Reserva a confirmar\",\n  \"allow_overdraft\": false,\n  \"skip_queue\": true,\n  \"inflight\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json[\"transaction_id\"]) { pm.collectionVariables.set(\"inflight_id\", json[\"transaction_id\"]); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Inflight: confirmar (commit)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions/inflight/{{inflight_id}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions",
+                "inflight",
+                "{{inflight_id}}"
+              ]
+            },
+            "description": "Aplica la reserva. Sin amount confirma el total.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"commit\",\n  \"skip_queue\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (200)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Inflight: reservar USD 2 para anular",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions"
+              ]
+            },
+            "description": "Segunda reserva, para probar la anulación.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"{{cuenta_a}}\",\n  \"destination\": \"{{cuenta_b}}\",\n  \"amount\": 2,\n  \"precision\": 100,\n  \"currency\": \"USD\",\n  \"reference\": \"{{$guid}}\",\n  \"description\": \"Reserva a anular\",\n  \"allow_overdraft\": false,\n  \"skip_queue\": true,\n  \"inflight\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});",
+                  "let json = {};",
+                  "try { json = pm.response.json(); } catch (e) {}",
+                  "if (json[\"transaction_id\"]) { pm.collectionVariables.set(\"inflight_void_id\", json[\"transaction_id\"]); }"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Inflight: anular (void)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions/inflight/{{inflight_void_id}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions",
+                "inflight",
+                "{{inflight_void_id}}"
+              ]
+            },
+            "description": "Libera la reserva sin mover dinero.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"void\",\n  \"skip_queue\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (200)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lote atómico A→B y B→A",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/transactions/bulk",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions",
+                "bulk"
+              ]
+            },
+            "description": "Bloquea varios saldos en una sola operación. atomic=true: si una falla, no se aplica ninguna.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"atomic\": true,\n  \"inflight\": false,\n  \"run_async\": false,\n  \"skip_queue\": true,\n  \"transactions\": [\n    {\n      \"source\": \"{{cuenta_a}}\",\n      \"destination\": \"{{cuenta_b}}\",\n      \"amount\": 1,\n      \"precision\": 100,\n      \"currency\": \"USD\",\n      \"reference\": \"{{$guid}}\",\n      \"description\": \"Lote A a B\",\n      \"allow_overdraft\": false,\n      \"skip_queue\": true\n    },\n    {\n      \"source\": \"{{cuenta_b}}\",\n      \"destination\": \"{{cuenta_a}}\",\n      \"amount\": 1,\n      \"precision\": 100,\n      \"currency\": \"USD\",\n      \"reference\": \"{{$guid}}\",\n      \"description\": \"Lote B a A\",\n      \"allow_overdraft\": false,\n      \"skip_queue\": true\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reembolsar la última transferencia",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/refund-transaction/{{transaction_id}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "refund-transaction",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": "Crea el movimiento inverso de la transferencia directa A→B.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"skip_queue\": true,\n  \"description\": \"Reembolso experimento\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (201)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([201]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reembolsar otra vez (rechazo esperado)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base}}/refund-transaction/{{transaction_id}}",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "refund-transaction",
+                "{{transaction_id}}"
+              ]
+            },
+            "description": "Debe rechazarse con 409 TXN_ALREADY_REFUNDED. Bajo concurrencia, dos reembolsos simultáneos no deberían aplicarse ambos.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"skip_queue\": true,\n  \"description\": \"Reembolso duplicado\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Código HTTP esperado (409)\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([409]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "04 Recuperación",
+      "description": "Úsala después de corridas por cola si quedan transacciones atascadas.",
+      "item": [
+        {
+          "name": "Recuperar transacciones en cola",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base}}/transactions/recover?threshold=2m",
+              "host": [
+                "{{base}}"
+              ],
+              "path": [
+                "transactions",
+                "recover"
+              ],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "2m",
+                  "description": "Duración: 30s, 2m, 1h"
+                }
+              ]
+            },
+            "description": "Reprocesa las transacciones en QUEUED más antiguas que threshold."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Respuesta 2xx\", function () {",
+                  "    pm.expect(pm.response.code).to.be.within(200, 299);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
     }
   ],
   "variable": [
     {
+      "key": "base",
       "value": "http://localhost:5001",
-      "key": "base"
+      "description": "URL de la API"
     },
     {
+      "key": "worker_base",
+      "value": "http://localhost:5004",
+      "description": "URL del worker"
+    },
+    {
+      "key": "api_key",
       "value": "blnk-experimento-local",
-      "key": "api_key"
+      "description": "Clave maestra (cabecera X-Blnk-Key)"
     },
     {
+      "key": "cuenta_a",
       "value": "bln_d0b14457-5a45-4cd0-b32d-cb4922c4220b",
-      "key": "cuenta_a"
+      "description": "Cuenta A. Valor inicial de datos-prueba.json; 01 Preparación la reemplaza"
     },
     {
+      "key": "cuenta_b",
       "value": "bln_e9789130-a745-40ba-96dc-29dd33fedb3e",
-      "key": "cuenta_b"
+      "description": "Cuenta B. Valor inicial de datos-prueba.json; 01 Preparación la reemplaza"
+    },
+    {
+      "key": "ledger_id",
+      "value": "",
+      "description": "Se llena automáticamente"
+    },
+    {
+      "key": "transaction_id",
+      "value": "",
+      "description": "Se llena automáticamente"
+    },
+    {
+      "key": "transaction_ref",
+      "value": "",
+      "description": "Se llena automáticamente"
+    },
+    {
+      "key": "transaction_cola_id",
+      "value": "",
+      "description": "Se llena automáticamente"
+    },
+    {
+      "key": "ref_repetida",
+      "value": "",
+      "description": "Se llena automáticamente"
+    },
+    {
+      "key": "inflight_id",
+      "value": "",
+      "description": "Se llena automáticamente"
+    },
+    {
+      "key": "inflight_void_id",
+      "value": "",
+      "description": "Se llena automáticamente"
     }
   ]
 }
