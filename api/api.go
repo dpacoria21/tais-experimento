@@ -142,6 +142,9 @@ func (a Api) Router() *gin.Engine {
 	router.GET("/hooks", a.ListHooks)
 	router.DELETE("/hooks/:id", a.DeleteHook)
 
+	// Experimento de concurrencia: contadores de la estrategia activa (clave maestra)
+	router.GET("/concurrency/counters", func(c *gin.Context) { c.JSON(http.StatusOK, a.blnk.ConcurrencyCounters()) })
+
 	// API Key routes
 	router.POST("/api-keys", a.CreateAPIKey)
 	router.GET("/api-keys", a.ListAPIKeys)

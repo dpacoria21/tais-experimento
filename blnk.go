@@ -63,6 +63,15 @@ const (
 //go:embed sql/*.sql
 var SQLFiles embed.FS
 
+// ConcurrencyCounters devuelve los contadores de la estrategia de concurrencia
+// activa en este proceso (para las pruebas del experimento).
+func (l *Blnk) ConcurrencyCounters() concurrency.Counters {
+	if l.concurrency == nil {
+		return concurrency.Counters{Strategy: concurrency.StrategyOriginal}
+	}
+	return l.concurrency.Counters()
+}
+
 // initializeRedisClients sets up both the Redis client and Asynq client
 func initializeRedisClients(config *config.Configuration) (redis.UniversalClient, *asynq.Client, error) {
 	pool := &redis_db.PoolConfig{

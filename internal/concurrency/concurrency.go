@@ -70,6 +70,32 @@ type Manager struct {
 	detector deadlockDetector // 5. candados con grafo de espera
 
 	clock atomic.Int64 // marcas de tiempo lógicas (4) e identificadores de transferencia (5)
+
+	// Contadores acumulados desde el arranque (Tabla 3 del informe). El
+	// experimento toma la diferencia antes y después de cada medición.
+	transfers atomic.Int64 // transferencias que entraron a Execute
+	retries   atomic.Int64 // intentos repetidos tras un aborto (CAS, Wait-Die, víctima)
+	exhausted atomic.Int64 // transferencias que agotaron el tiempo de reintentos
+}
+
+// Counters es la lectura de los contadores del Manager.
+type Counters struct {
+	Strategy          Strategy `json:"strategy"`
+	Transfers         int64    `json:"transfers"`
+	Retries           int64    `json:"retries"`
+	RetriesExhausted  int64    `json:"retries_exhausted"`
+	DeadlocksDetected int64    `json:"deadlocks_detected"`
+}
+
+// Counters devuelve los contadores acumulados.
+func (m *Manager) Counters() Counters {
+	return Counters{
+		Strategy:          m.strategy,
+		Transfers:         m.transfers.Load(),
+		Retries:           m.retries.Load(),
+		RetriesExhausted:  m.exhausted.Load(),
+		DeadlocksDetected: m.detector.deadlocks.Load(),
+	}
 }
 
 // New crea un Manager. retryTimeout es el tiempo máximo que una transferencia
@@ -86,6 +112,7 @@ func (m *Manager) Strategy() Strategy { return m.strategy }
 // porque las estrategias 3, 4 y 5 la reintentan. isVersionConflict reconoce el
 // error del UPDATE ... WHERE version = v que no afectó filas.
 func (m *Manager) Execute(ctx context.Context, source, destination string, fn func(context.Context) error, isVersionConflict func(error) bool) error {
+	m.transfers.Add(1)
 	switch m.strategy {
 	case StrategyGlobal:
 		return m.runGlobal(ctx, fn)
@@ -153,10 +180,12 @@ func (m *Manager) retry(ctx context.Context, attempt func() (retry bool, err err
 			return err
 		}
 		if !time.Now().Before(deadline) {
+			m.exhausted.Add(1)
 			// La causa va como texto (%v) para que la API responda con el código
 			// de aborto (GEN_CONCURRENCY_ABORTED) y no con el de la causa.
 			return fmt.Errorf("%w after %d attempts (strategy %s): %v", ErrRetriesExhausted, n+1, m.strategy, err)
 		}
+		m.retries.Add(1)
 		if err := sleep(ctx, backoff(n, deadline)); err != nil {
 			return err
 		}
