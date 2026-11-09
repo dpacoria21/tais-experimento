@@ -26,6 +26,7 @@ import (
 	"github.com/blnkfinance/blnk/config"
 	"github.com/blnkfinance/blnk/database"
 	"github.com/blnkfinance/blnk/internal/cache"
+	"github.com/blnkfinance/blnk/internal/concurrency"
 	"github.com/blnkfinance/blnk/internal/hooks"
 	"github.com/blnkfinance/blnk/internal/hotpairs"
 	"github.com/blnkfinance/blnk/internal/notification"
@@ -35,6 +36,7 @@ import (
 
 	"github.com/blnkfinance/blnk/model"
 	"github.com/redis/go-redis/v9"
+	"github.com/sirupsen/logrus"
 )
 
 // Blnk represents the main struct for the Blnk application.
@@ -51,6 +53,7 @@ type Blnk struct {
 	config      *config.Configuration
 	cache       cache.Cache
 	hotPairs    *hotpairs.Manager
+	concurrency *concurrency.Manager // estrategia del experimento (ver executeWithLock)
 }
 
 const (
@@ -119,6 +122,12 @@ func NewBlnk(db database.IDataSource) (*Blnk, error) {
 		return nil, err
 	}
 
+	strategy, err := concurrency.ParseStrategy(configuration.Transaction.ConcurrencyStrategy)
+	if err != nil {
+		return nil, err
+	}
+	logrus.WithField("strategy", strategy).Info("concurrency strategy")
+
 	redisClient, asynqClient, err := initializeRedisClients(configuration)
 	if err != nil {
 		return nil, err
@@ -152,6 +161,7 @@ func NewBlnk(db database.IDataSource) (*Blnk, error) {
 		config:      configuration,
 		cache:       newCache,
 		hotPairs:    hotPairManager,
+		concurrency: concurrency.New(strategy, configuration.Transaction.LockWaitTimeout),
 	}
 
 	notification.RegisterWebhookSender(func(event string, payload interface{}) error {

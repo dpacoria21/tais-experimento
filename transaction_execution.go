@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/blnkfinance/blnk/database"
+	"github.com/blnkfinance/blnk/internal/concurrency"
 	blnkhooks "github.com/blnkfinance/blnk/internal/hooks"
 	"github.com/blnkfinance/blnk/internal/hotpairs"
 	redlock "github.com/blnkfinance/blnk/internal/lock"
@@ -664,6 +666,22 @@ func (l *Blnk) executeWithLock(ctx context.Context, transaction *model.Transacti
 	// Update transaction with resolved IDs
 	transaction.Source = sourceID
 	transaction.Destination = destID
+
+	// Experimento de concurrencia: con una estrategia distinta de "original",
+	// internal/concurrency decide el acceso a los dos saldos en lugar del
+	// candado Redis. fn relee los saldos, así que puede reintentarse.
+	if l.concurrency != nil && l.concurrency.Strategy() != concurrency.StrategyOriginal {
+		var result *model.Transaction
+		err := l.concurrency.Execute(ctx, sourceID, destID, func(ctx context.Context) (err error) {
+			result, err = fn(ctx)
+			return err
+		}, database.IsOptimisticLockError)
+		if err != nil {
+			span.RecordError(err)
+			return nil, err
+		}
+		return result, nil
+	}
 
 	// Acquire distributed locks for both source and destination balances
 	// MultiLocker handles deduplication (if source == destination) and sorts keys lexicographically

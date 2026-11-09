@@ -73,9 +73,37 @@ Get-Content .\datos-prueba.json
 - `transaction_execution.go`: ejecucion de movimientos.
 - `queue.go`, `cmd/workers.go`: colas y trabajadores.
 - `blnk.experimento.json`: configuracion local.
+- `internal/concurrency/`: las cinco estrategias del experimento (ver "Estrategias de concurrencia").
 
 El comportamiento original combina colas, bloqueos Redis y control optimista. Para aislar una tecnica debes controlar las otras capas. `skip_queue=true` permite solicitar procesamiento directo; cuando uses colas, mide hasta que la transaccion quede aplicada, ademas de medir la respuesta HTTP.
 
 En la comprobacion de esta version, la transaccion en cola genero una transaccion hija `APPLIED` con `parent_transaction` apuntando a la solicitud original; la original permanecio `QUEUED`. Correlaciona ambas y verifica los saldos al medir finalizacion. `verificacion.json` guarda los IDs de esa comprobacion. Los saldos de las cuentas de prueba se dejaron nuevamente en A=990 y B=10.
 
-No se han cambiado las tecnicas originales: esta instalacion es el punto de partida para los experimentos.
+## Estrategias de concurrencia
+
+El acceso a los dos saldos de una transferencia se decide en `executeWithLock` (`transaction_execution.go`). La estrategia se elige al iniciar, sin recompilar:
+
+```powershell
+.\experimento.ps1 iniciar -Estrategia wait_die
+.\experimento.ps1 reconstruir -Estrategia cas     # despues de editar codigo Go
+```
+
+Sin `-Estrategia` se usa `original`. El log de `server` muestra la activa (`concurrency strategy`).
+
+| Valor | Estrategia | Archivo |
+|---|---|---|
+| `original` | Blnk sin cambios: candados Redis con claves ordenadas, todo o nada, y control de version en SQL | `internal/lock/lock.go` |
+| `global` | Bloqueo global: un unico `sync.Mutex` | `internal/concurrency/global.go` |
+| `ordered` | Bloqueo por cuenta con orden total | `internal/concurrency/ordered.go` |
+| `cas` | CAS sobre estado inmutable: `UPDATE ... WHERE version = v` y reintento | `internal/concurrency/cas.go` |
+| `wait_die` | Wait-Die | `internal/concurrency/waitdie.go` |
+| `no_prevention` | Control sin prevencion con detector de ciclos | `internal/concurrency/noprevention.go` |
+
+Lo comun (seleccion, reintentos y candado con dueno) esta en `internal/concurrency/concurrency.go`.
+
+- CAS, Wait-Die y la victima del detector reintentan con la misma pausa aleatoria que el candado Redis original (5 a 100 ms) durante `lock_wait_timeout` (3 s). Si no terminan, la API responde 409 `GEN_CONCURRENCY_ABORTED`.
+- El detector busca un ciclo cuando un candado lleva 100 ms esperando. Cada interbloqueo detectado escribe en el log de `server` una linea `deadlock detected, victim aborted` con el total acumulado.
+- Wait-Die y el detector usan un candado propio con dueno y espera cancelable: `sync.Mutex` no sabe quien lo tiene ni permite abortar una espera.
+- Las dos filas de saldo se actualizan siempre en orden de `balance_id` (`database/transaction.go`). Con candados no cambia nada; en `cas` evita que A->B y B->A se interbloqueen dentro de PostgreSQL.
+
+Para que la comparacion sea valida, envia las transferencias con `skip_queue: true` a una sola replica de `server`: las estrategias coordinan un solo proceso, y por la cola las procesa el `worker` por otro camino.

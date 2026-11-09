@@ -1,9 +1,13 @@
 param(
     [ValidateSet('iniciar','detener','estado','logs','reconstruir','probar')]
-    [string]$Accion = 'estado'
+    [string]$Accion = 'estado',
+    # Estrategia de concurrencia para iniciar o reconstruir (por defecto: original).
+    [ValidateSet('original','global','ordered','cas','wait_die','no_prevention')]
+    [string]$Estrategia = 'original'
 )
 $ErrorActionPreference = 'Stop'
 $compose = Join-Path $PSScriptRoot 'compose.experimento.yaml'
+$env:ESTRATEGIA = $Estrategia
 if ($Accion -eq 'probar') {
     $headers = @{ 'X-Blnk-Key' = 'blnk-experimento-local' }
     $response = Invoke-WebRequest 'http://localhost:5001/ledgers' -Headers $headers -TimeoutSec 30 -UseBasicParsing

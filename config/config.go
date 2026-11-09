@@ -27,6 +27,8 @@ import (
 
 	"github.com/kelseyhightower/envconfig"
 	"github.com/sirupsen/logrus"
+
+	"github.com/blnkfinance/blnk/internal/concurrency"
 )
 
 // Default constants
@@ -197,6 +199,9 @@ type TransactionConfig struct {
 	EnableQueuedChecks         bool            `json:"enable_queued_checks"          envconfig:"BLNK_TRANSACTION_ENABLE_QUEUED_CHECKS"`
 	DisableBatchReferenceCheck bool            `json:"disable_batch_reference_check" envconfig:"BLNK_TRANSACTION_DISABLE_BATCH_REFERENCE_CHECK"`
 	HashChain                  HashChainConfig `json:"hash_chain"`
+	// ConcurrencyStrategy elige la estrategia del experimento de concurrencia:
+	// original | global | ordered | cas | wait_die | no_prevention.
+	ConcurrencyStrategy string `json:"concurrency_strategy" envconfig:"BLNK_TRANSACTION_CONCURRENCY_STRATEGY"`
 }
 
 type ReconciliationConfig struct {
@@ -326,6 +331,11 @@ func (cnf *Configuration) validateAndAddDefaults() error {
 	cnf.setDefaultValues()
 	cnf.trimWhitespace()
 	cnf.setupRateLimiting()
+
+	// Una estrategia mal escrita detiene el arranque en lugar de medir otra.
+	if _, err := concurrency.ParseStrategy(cnf.Transaction.ConcurrencyStrategy); err != nil {
+		return err
+	}
 
 	if !cnf.Server.Secure {
 		logrus.Warn(

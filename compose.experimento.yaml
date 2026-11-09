@@ -8,6 +8,8 @@ x-blnk: &blnk
     - ./blnk.experimento.json:/app/blnk.json:ro
   environment:
     TZ: UTC
+    # original | global | ordered | cas | wait_die | no_prevention
+    BLNK_TRANSACTION_CONCURRENCY_STRATEGY: ${ESTRATEGIA:-original}
 services:
   postgres:
     image: postgres:16-bookworm

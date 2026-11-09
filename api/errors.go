@@ -24,6 +24,7 @@ import (
 	model2 "github.com/blnkfinance/blnk/api/model"
 	"github.com/blnkfinance/blnk/database"
 	"github.com/blnkfinance/blnk/internal/apierror"
+	"github.com/blnkfinance/blnk/internal/concurrency"
 	redlock "github.com/blnkfinance/blnk/internal/lock"
 	"github.com/blnkfinance/blnk/internal/tokenization"
 	"github.com/gin-gonic/gin"
@@ -196,6 +197,8 @@ func classifySentinel(err error) (apierror.ErrorCode, bool) {
 		return apierror.ErrIdtTokenizationDisabled, true
 	case errors.Is(err, redlock.ErrLockHeld), errors.Is(err, redlock.ErrLockWaitTimeout):
 		return apierror.ErrGenResourceLocked, true
+	case errors.Is(err, concurrency.ErrRetriesExhausted):
+		return apierror.ErrGenConcurrencyAborted, true
 	case errors.Is(err, model2.ErrPrecisionMustBeInteger):
 		return apierror.ErrTxnPrecisionNotInteger, true
 	case errors.Is(err, blnk.ErrEntityNotFound):

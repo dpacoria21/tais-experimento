@@ -249,12 +249,15 @@ func (d Datasource) RecordTransactionWithBalances(ctx context.Context, txn *mode
 		_ = tx.Rollback()
 	}(tx)
 
-	if err := updateBalance(ctx, tx, sourceBalance); err != nil {
+	// Orden fijo por balance_id: ver balancesInIDOrder (database/concurrency.go).
+	firstBalance, secondBalance := balancesInIDOrder(sourceBalance, destinationBalance)
+
+	if err := updateBalance(ctx, tx, firstBalance); err != nil {
 		span.RecordError(err)
 		return nil, err
 	}
 
-	if err := updateBalance(ctx, tx, destinationBalance); err != nil {
+	if err := updateBalance(ctx, tx, secondBalance); err != nil {
 		span.RecordError(err)
 		return nil, err
 	}
@@ -306,12 +309,15 @@ func (d Datasource) RecordTransactionWithBalancesAndOutbox(ctx context.Context, 
 		_ = tx.Rollback()
 	}(tx)
 
-	if err := updateBalance(ctx, tx, sourceBalance); err != nil {
+	// Orden fijo por balance_id: ver balancesInIDOrder (database/concurrency.go).
+	firstBalance, secondBalance := balancesInIDOrder(sourceBalance, destinationBalance)
+
+	if err := updateBalance(ctx, tx, firstBalance); err != nil {
 		span.RecordError(err)
 		return nil, err
 	}
 
-	if err := updateBalance(ctx, tx, destinationBalance); err != nil {
+	if err := updateBalance(ctx, tx, secondBalance); err != nil {
 		span.RecordError(err)
 		return nil, err
 	}

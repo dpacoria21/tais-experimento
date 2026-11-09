@@ -38,6 +38,10 @@ const (
 	ErrGenRateLimited      ErrorCode = "GEN_RATE_LIMITED"
 	ErrGenInternal         ErrorCode = "GEN_INTERNAL"
 
+	// ErrGenConcurrencyAborted: la estrategia de concurrencia del experimento
+	// abortó la transferencia y sus reintentos no la completaron a tiempo.
+	ErrGenConcurrencyAborted ErrorCode = "GEN_CONCURRENCY_ABORTED"
+
 	// AUTH — authentication / authorization
 	ErrAuthMissingAPIKey           ErrorCode = "AUTH_MISSING_API_KEY"
 	ErrAuthInvalidAPIKey           ErrorCode = "AUTH_INVALID_API_KEY"
@@ -147,6 +151,8 @@ var statusByCode = map[ErrorCode]int{
 	ErrGenPayloadTooLarge:  http.StatusRequestEntityTooLarge,
 	ErrGenRateLimited:      http.StatusTooManyRequests,
 	ErrGenInternal:         http.StatusInternalServerError,
+
+	ErrGenConcurrencyAborted: http.StatusConflict,
 
 	ErrAuthMissingAPIKey:           http.StatusUnauthorized,
 	ErrAuthInvalidAPIKey:           http.StatusUnauthorized,
