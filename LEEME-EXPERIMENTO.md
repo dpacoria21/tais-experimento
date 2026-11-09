@@ -79,6 +79,7 @@ El comportamiento original combina colas, bloqueos Redis y control optimista. Pa
 
 En la comprobacion de esta version, la transaccion en cola genero una transaccion hija `APPLIED` con `parent_transaction` apuntando a la solicitud original; la original permanecio `QUEUED`. Correlaciona ambas y verifica los saldos al medir finalizacion. `verificacion.json` guarda los IDs de esa comprobacion. Los saldos de las cuentas de prueba se dejaron nuevamente en A=990 y B=10.
 
+<<<<<<< HEAD
 ## Estrategias de concurrencia
 
 El acceso a los dos saldos de una transferencia se decide en `executeWithLock` (`transaction_execution.go`). La estrategia se elige al iniciar, sin recompilar:
@@ -107,3 +108,10 @@ Lo comun (seleccion, reintentos y candado con dueno) esta en `internal/concurren
 - Las dos filas de saldo se actualizan siempre en orden de `balance_id` (`database/transaction.go`). Con candados no cambia nada; en `cas` evita que A->B y B->A se interbloqueen dentro de PostgreSQL.
 
 Para que la comparacion sea valida, envia las transferencias con `skip_queue: true` a una sola replica de `server`: las estrategias coordinan un solo proceso, y por la cola las procesa el `worker` por otro camino.
+=======
+No se han cambiado las tecnicas originales: esta instalacion es el punto de partida para los experimentos.
+
+## Despliegue
+
+Desplegado en Dokploy (https://tais-blnk.node.scn.rest). Cada push a `main` redespliega por webhook.
+>>>>>>> c6d7a58571165fa2d6c8df7c9b4a3b769c1d67a6
