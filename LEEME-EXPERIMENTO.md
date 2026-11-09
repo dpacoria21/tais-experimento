@@ -79,3 +79,7 @@ El comportamiento original combina colas, bloqueos Redis y control optimista. Pa
 En la comprobacion de esta version, la transaccion en cola genero una transaccion hija `APPLIED` con `parent_transaction` apuntando a la solicitud original; la original permanecio `QUEUED`. Correlaciona ambas y verifica los saldos al medir finalizacion. `verificacion.json` guarda los IDs de esa comprobacion. Los saldos de las cuentas de prueba se dejaron nuevamente en A=990 y B=10.
 
 No se han cambiado las tecnicas originales: esta instalacion es el punto de partida para los experimentos.
+
+## Despliegue
+
+Desplegado en Dokploy (https://tais-blnk.node.scn.rest). Cada push a `main` redespliega por webhook.
