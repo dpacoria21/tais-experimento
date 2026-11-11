@@ -13,8 +13,8 @@ Por cada corrida:
 Ejemplos (desde la carpeta blnk):
   .\pruebas-k6\ejecutar-experimento.ps1 -Piloto
   .\pruebas-k6\ejecutar-experimento.ps1
-  .\pruebas-k6\ejecutar-experimento.ps1 -Modo remoto -Base https://mi-blnk.ejemplo.com -ApiKey <clave> `
-      -PgConexion "postgres://usuario:clave@host:5432/blnk" -Estrategias cas
+  .\pruebas-k6\ejecutar-experimento.ps1 -Modo remoto -Base https://tais-blnk.node.scn.rest -ApiKey <clave-maestra> `
+      -Estrategias cas -Contenciones alta -Replicas 1
 #>
 param(
     [ValidateSet('local', 'remoto')]
@@ -29,10 +29,10 @@ param(
     [int]$MedicionS = 30,
     # Corrida corta para validar el montaje: 16 hilos, contencion alta y extrema, 1 replica.
     [switch]$Piloto,
-    # Modo remoto: URL del backend desplegado y conexion a su PostgreSQL.
+    # Modo remoto: URL del backend desplegado y su clave maestra (X-Blnk-Key).
+    # La integridad se verifica por la API, sin acceso a su PostgreSQL.
     [string]$Base = '',
     [string]$ApiKey = 'blnk-experimento-local',
-    [string]$PgConexion = '',
     # Semilla del orden aleatorio de las corridas (0 = al azar, queda registrada).
     [int]$Semilla = 0,
     [string]$K6Imagen = 'grafana/k6:1.0.0'
@@ -42,7 +42,7 @@ $Inv = [Globalization.CultureInfo]::InvariantCulture
 
 $Raiz = $PSScriptRoot
 $Compose = Join-Path (Split-Path $Raiz -Parent) 'compose.experimento.yaml'
-$Datos = Join-Path $Raiz 'datos'
+$Datos = Join-Path $Raiz $(if ($Modo -eq 'remoto') { 'datos-remoto' } else { 'datos' })
 $ContenedorServidor = 'experimento-blnk-server-1'
 $RedDocker = 'experimento-blnk_default'
 
@@ -53,7 +53,7 @@ if ($Modo -eq 'local') {
     $BaseHost = 'http://localhost:5001'   # desde Windows
     $BaseK6 = 'http://server:5001'        # desde el contenedor de k6
 } else {
-    if (-not $Base -or -not $PgConexion) { throw 'Modo remoto: indica -Base y -PgConexion.' }
+    if (-not $Base -or -not $PSBoundParameters.ContainsKey('ApiKey')) { throw 'Modo remoto: indica -Base y -ApiKey (clave maestra del servidor desplegado).' }
     if ($Estrategias.Count -ne 1) { throw 'Modo remoto: indica una sola -Estrategias (la activa en el servidor); cambiala y vuelve a ejecutar para la siguiente.' }
     $BaseHost = $Base.TrimEnd('/'); $BaseK6 = $BaseHost
 }
@@ -71,13 +71,9 @@ function Invoke-Nativo([string]$Exe, [string[]]$Argumentos) {
     [PSCustomObject]@{ Codigo = $codigo; Salida = ($salida -join "`n") }
 }
 
-# Consulta SQL de una sola linea; devuelve las columnas separadas por '|'.
+# Consulta SQL de una sola linea (modo local); devuelve las columnas separadas por '|'.
 function Invoke-Sql([string]$Consulta) {
-    if ($Modo -eq 'local') {
-        $a = @('compose', '-f', $Compose, 'exec', '-T', 'postgres', 'psql', '-U', 'postgres', '-d', 'blnk', '-At', '-F', '|', '-c', $Consulta)
-    } else {
-        $a = @('run', '--rm', 'postgres:16', 'psql', $PgConexion, '-At', '-F', '|', '-c', $Consulta)
-    }
+    $a = @('compose', '-f', $Compose, 'exec', '-T', 'postgres', 'psql', '-U', 'postgres', '-d', 'blnk', '-At', '-F', '|', '-c', $Consulta)
     $r = Invoke-Nativo 'docker' $a
     if ($r.Codigo -ne 0) { throw "Consulta SQL fallida: $($r.Salida)" }
     return ($r.Salida -split "`n" | Where-Object { $_ -match '\S' } | Select-Object -Last 1).Trim()
@@ -169,10 +165,50 @@ function Get-Integridad([string]$Ledger, [string]$Corrida, [string]$Desde) {
     }
 }
 
+# --- integridad por la API (modo remoto, sin acceso a PostgreSQL) ------------
+# Recorre los saldos del libro en paginas de 1000. Cada transferencia del experimento
+# mueve 100 unidades dentro del libro, asi que el aumento de la suma de debitos / 100
+# es el numero de transferencias aplicadas.
+function Get-SaldosApi([string]$Ledger) {
+    $suma = [decimal]0; $debitos = [decimal]0; $negativos = 0; $descuadrados = 0; $cuentas = 0
+    for ($offset = 0; ; $offset += 1000) {
+        $respuesta = Invoke-RestMethod "$BaseHost/balances?ledger_id_eq=$Ledger&limit=1000&offset=$offset" -Headers $Headers -TimeoutSec 60
+        # PowerShell 5.1 entrega el arreglo JSON como un solo objeto: se recorre explicitamente.
+        $pagina = @($respuesta | ForEach-Object { $_ } | Where-Object { $null -ne $_ })
+        if ($pagina.Count -eq 0) { break }
+        foreach ($b in $pagina) {
+            $saldo = [decimal]$b.balance; $credito = [decimal]$b.credit_balance; $debito = [decimal]$b.debit_balance
+            $suma += $saldo; $debitos += $debito; $cuentas++
+            if ($saldo -lt 0) { $negativos++ }
+            if ($saldo -ne $credito - $debito) { $descuadrados++ }
+        }
+        if ($pagina.Count -lt 1000) { break }
+    }
+    [PSCustomObject]@{ Suma = $suma; SumaDebitos = $debitos; Negativos = $negativos; Descuadrados = $descuadrados; Cuentas = $cuentas }
+}
+
+function Get-InstantaneaModo([string]$Ledger) {
+    if ($Modo -eq 'local') { return Get-Instantanea $Ledger }
+    $s = Get-SaldosApi $Ledger
+    [PSCustomObject]@{ Suma = $s.Suma; SumaDebitos = $s.SumaDebitos; DeadlocksPg = $null; Desde = '' }
+}
+
+function Get-IntegridadModo([string]$Ledger, [string]$Corrida, $Antes) {
+    if ($Modo -eq 'local') { return Get-Integridad $Ledger $Corrida $Antes.Desde }
+    $s = Get-SaldosApi $Ledger
+    [PSCustomObject]@{
+        Suma = $s.Suma; Negativos = $s.Negativos; Descuadrados = $s.Descuadrados
+        AplicadasBd = [long](($s.SumaDebitos - $Antes.SumaDebitos) / 100); DeadlocksPg = $null
+    }
+}
+
 # --- preparacion -----------------------------------------------------------
 
 New-Item -ItemType Directory -Force $Datos | Out-Null
-foreach ($n in @(10000, 2)) {
+$necesarios = @()
+if ($Contenciones -contains 'baja' -or $Contenciones -contains 'alta') { $necesarios += 10000 }
+if ($Contenciones -contains 'extrema') { $necesarios += 2 }
+foreach ($n in $necesarios) {
     $archivo = Join-Path $Datos "cuentas-$n.json"
     if (-not (Test-Path $archivo)) {
         Write-Output "Preparando el juego de $n cuentas (una sola vez)..."
@@ -180,11 +216,12 @@ foreach ($n in @(10000, 2)) {
         if (-not (Test-Path $archivo)) { throw "No se creo $archivo; revisa $Datos\preparar-$n.log.err" }
     }
 }
-$Juegos = @{
-    'baja'    = Get-Content (Join-Path $Datos 'cuentas-10000.json') -Raw | ConvertFrom-Json
-    'alta'    = Get-Content (Join-Path $Datos 'cuentas-10000.json') -Raw | ConvertFrom-Json
-    'extrema' = Get-Content (Join-Path $Datos 'cuentas-2.json') -Raw | ConvertFrom-Json
+$Juegos = @{}
+if ($necesarios -contains 10000) {
+    $j = Get-Content (Join-Path $Datos 'cuentas-10000.json') -Raw | ConvertFrom-Json
+    $Juegos['baja'] = $j; $Juegos['alta'] = $j
 }
+if ($necesarios -contains 2) { $Juegos['extrema'] = Get-Content (Join-Path $Datos 'cuentas-2.json') -Raw | ConvertFrom-Json }
 
 # --- matriz y orden aleatorio ---------------------------------------------
 
@@ -227,7 +264,7 @@ foreach ($conf in $orden) {
     $null = Invoke-K6 'transferencias.js' ($vars + @{ DURACION = "${CalentamientoS}s"; CORRIDA = "cal$corrida"; SALIDA = '/salida/calentamiento.json' }) $dir (Join-Path $dir 'calentamiento.log')
 
     # 3. Instantanea inicial
-    $antes = Get-Instantanea $juego.ledger_id
+    $antes = Get-InstantaneaModo $juego.ledger_id
     $cAntes = Get-Contadores
 
     # 4. Medicion
@@ -235,7 +272,7 @@ foreach ($conf in $orden) {
 
     # 5. Instantanea final e integridad
     $cDespues = Get-Contadores
-    $integ = Get-Integridad $juego.ledger_id $corrida $antes.Desde
+    $integ = Get-IntegridadModo $juego.ledger_id $corrida $antes
     $k6 = Get-Content (Join-Path $dir 'medicion.json') -Raw | ConvertFrom-Json
 
     $transferencias = $cDespues.transfers - $cAntes.transfers
@@ -257,7 +294,7 @@ foreach ($conf in $orden) {
         transferencias_servidor = $transferencias; reintentos = $reintentos; tasa_reintentos_pct = Num $tasa
         reintentos_agotados = $cDespues.retries_exhausted - $cAntes.retries_exhausted
         interbloqueos_detectados = $cDespues.deadlocks_detected - $cAntes.deadlocks_detected
-        deadlocks_postgres = $integ.DeadlocksPg - $antes.DeadlocksPg
+        deadlocks_postgres = $(if ($Modo -eq 'local') { $integ.DeadlocksPg - $antes.DeadlocksPg } else { '' })
         sin_respuesta_60s = $k6.sin_respuesta
         integridad = $(if ($integridad) { 'CUMPLE' } else { 'NO CUMPLE' })
         suma_esperada = $juego.total_unidades; suma_final = $integ.Suma

@@ -15,3 +15,7 @@ tests/loadtest/*.ndjson
 # Experimento: juegos de cuentas (propios de cada base) y salidas de las corridas
 pruebas-k6/datos/
 pruebas-k6/resultados/
+pruebas-k6/datos-remoto/
+
+# Gráficos: entorno virtual de Python
+diagrams/.venv/
